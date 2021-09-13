@@ -1,0 +1,1131 @@
+---
+title: "mice_landscape_Figures_1_3"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r clean-up , include=FALSE}
+
+rm(list=ls())
+
+```
+
+
+```{r paths}
+
+path <- '/data/mice'
+fpath <- '/data/mice/figures/'
+opath <- '/data/mice/output/'
+
+```
+
+
+
+```{r functions, include=FALSE, cache=TRUE}
+
+# Helper function to load packages. If package is not found, R tries to install it.
+
+load_pkg <- function(pkg){
+  if(!require(pkg, character.only = T)) {
+    install.packages(pkg)
+    library(pkg, character.only = T)
+  }
+}
+
+# Helper function to extract the field of valid CDR3s from MAF .csv files
+
+get_field <- function(dataset, field){
+  
+  idx <- which(names(dataset) == field)
+  clmns <- dataset[which(dataset$MAF_Clonal_. != 0), idx]
+  
+  return(clmns)
+}
+
+```
+
+
+```{r libraries/packages, include=FALSE, cache=TRUE}
+
+library(plyr)
+load_pkg('gplots') 
+load_pkg('dplyr')
+load_pkg('venn')
+load_pkg('ggplot2')
+load_pkg('cowplot')
+load_pkg('stringdist')
+load_pkg('seqinr')
+load_pkg('devtools')
+library(robCompositions)
+library(VennDiagram)
+library(circlize)
+library(RColorBrewer)
+load_pkg('plotrix')
+library('vegan')
+library(plotly)
+load_pkg('kmer')
+library(RColorBrewer)
+library(purrr)
+library(ape)
+library(ggplot2)
+library(igraph)
+library(limma)
+library(pheatmap)
+library(viridis)
+load_pkg('edgeR')
+load_pkg('stringr')
+library(tidyr)
+library(textclean)
+library(gridExtra)
+
+
+```
+
+
+```{r colors}
+
+# Different color palettes:
+
+col_palettes <- list(c("#f1eef6","#045a8d","#2b8cbe"),
+                     c("#edf8fb","#810f7c", "#b3cde3"),
+                     c("#edf8fb","#006d2c","#2ca25f"),
+                     c("aquamarine3", "slateblue4", "snow3"))
+
+col_mouse <- c('#bdc9e1','#74a9cf','#0570b0', '#b2e2e2','#66c2a4','#238b45')
+col_cohort <- c("#3690c0", "#02818a")
+col_organs <- c("#80b1d3", "#1f78b4", "#ccebc5", "#8dd3c7", "#fdb462", "#fb8072")
+
+
+```
+
+
+
+#FOR ALL MICE TOGETHER:
+```{r all data sets and formatting}
+
+
+files <- grep('.txt', list.files(path, full.names = TRUE), value = TRUE)
+
+data <- list()
+
+for(i in 1:length(files)){
+  
+  data[[i]] <- read.delim(files[i])
+  data[[i]] <- data[[i]][data[[i]]$Majority_Isotype != 'Control',]
+  data[[i]] <- data[[i]][data[[i]]$MAF_Clonal_. != 0,]
+  data[[i]]$MAF_Clonotype_.[is.na(data[[i]]$MAF_Clonotype_.)] <- 0
+  data[[i]]$MAF_Clonotype_. <- data[[i]]$MAF_Clonotype_./sum(data[[i]]$MAF_Clonotype_.)*100
+  data[[i]]$MAF_Clonal_. <- data[[i]]$MAF_Clonal_./sum(data[[i]]$MAF_Clonal_.)*100
+  data[[i]] <- with(data[[i]], data[[i]][order(MAF_Clonal_., decreasing = T), ])
+  data[[i]] <- data[[i]][c("CDR3","MAF_Clonal_.", "Majority_V_Gene", "Majority_J_Gene", "Majority_Isotype", "SHM.ns._CB")]
+  data[[i]] <- droplevels(data[[i]]) #to remove filtered out rows to appear in subsequent analysis
+}
+names(data) <- sapply(strsplit(files, split = '[/_.]'), function(x) x[8])
+
+names(data) <- mgsub(c("-1", "-2", "-3", "-4", "-5", "-6"),x=names(data),replacement= c("-aLN-L", "-iLN-L", "-iLN-R", "-aLN-R", "-spleen", "-BM"))
+names(data) <- mgsub(c("A1-", "D4-", "E5-", "F6-", "H8-", "I9-"),x=names(data),replacement= c("A-", "B-", "C-", "D-", "E-", "F-"))
+data <- data[c("A-aLN-L", "A-iLN-L", "A-aLN-R", "A-iLN-R", "A-spleen", "A-BM", "B-aLN-L", "B-iLN-L", "B-aLN-R", "B-iLN-R", "B-spleen", "B-BM", "C-aLN-L", "C-iLN-L", "C-aLN-R", "C-iLN-R", "C-spleen", "C-BM", "D-aLN-L", "D-iLN-L", "D-aLN-R", "D-iLN-R", "D-spleen", "D-BM", "E-aLN-L", "E-iLN-L", "E-aLN-R", "E-iLN-R", "E-spleen", "E-BM", "F-aLN-L", "F-iLN-L", "F-aLN-R", "F-iLN-R", "F-spleen", "F-BM")]
+
+
+sapply(data, function(x) nrow(x))
+
+```
+
+
+###############################################################################################################
+
+####### ANALYSIS for CLONES (100% CDRH3 a.a. identity, same V, J gene) --> data_clone
+
+
+###############################################################################################################
+
+
+#Clustering: 100% CDRH3 a.a. similiarity, same V, J gene; this is needed to compare clones across all organs and mice.
+```{r Clustering for all mice: 100% CDRH3 a.a. similiarity, same V, J gene, dat, echo=F, cache=T}
+
+##################################################################################################
+
+# HELPER FUNCTIONS FOR CLONOTYPING:
+
+##################################################################################################
+
+Combined_Datasets <- list()
+Clusters <- list()
+Overlap_Table <- list()
+
+# Helper function to select the relevant subsets
+
+select_columns <- function(x){
+  x_new <- dplyr::select(x, c('CDR3', 'Majority_V_Gene', 'Majority_J_Gene'))
+  return(x_new)
+}
+
+# Helper function to calculate distance matrix
+
+dist_calc <- function(x){
+  
+  dist_mat <- as.dist(stringdistmatrix(x, x, method = 'hamming')/nchar(x[1])) #divide through nchar in order to get percentage
+  return(dist_mat)
+  
+}
+
+# Function to compute clonotypes
+
+clonal_clustering <- function(data){
+  
+  meta_list <- split(data, 
+                     list(data$Majority_V_Gene, 
+                          data$Majority_J_Gene, 
+                          data$Len))
+  
+  head(meta_list)
+  
+  idxs <- which(sapply(meta_list, function(x) length(x$CDR3)) > 0)
+  
+  meta_list <- meta_list[idxs]
+  
+  dist_mat <- lapply(meta_list, function(x) dist_calc(x$CDR3))
+  
+  # Hierarchical clustering step, complete linkage, cut tree at 0% dissimilarity
+  
+  clusts <- lapply(dist_mat, function(x) {
+    if(length(x) > 0){
+      return(cutree(hclust(x, method = 'single'), h = 0))
+    } else {
+      return(1)
+    }
+  }
+  )
+  
+  # Needed to increase the clonotype numbering correctly
+  add_nr <- 0
+  
+  # Renumber clonotypes 
+  for(i in 1:length(clusts)){
+    clusts[[i]] <- clusts[[i]] + add_nr
+    add_nr <- max(clusts[[i]])
+  }
+  
+  meta_list <- do.call(rbind, meta_list)
+  meta_list$clonotype <- unlist(clusts)
+  
+  
+  return(unique(meta_list))
+}
+
+
+
+
+##################################################################################################
+
+# CLONOTYPING ACROSS ORGANS OF MOUSE:
+
+##################################################################################################
+
+
+# Iterate through data_clone sets given by the order in 'pat'
+pat <- c("A-", "B-", "C-", "D-", "E-", "F-") 
+title <- c("A", "B", "C", "D", "E", "F") 
+
+data_clone <- data
+
+n_j <- 0
+
+for(i in 1:6){
+    Combined_Datasets[[i]] <- do.call(rbind, lapply(data_clone[grep(pat[i], names(data_clone))],
+                                                    select_columns))
+    
+    Combined_Datasets[[i]] <- unique(Combined_Datasets[[i]])
+    
+    Combined_Datasets[[i]]$CDR3 <- as.character((Combined_Datasets[[i]]$CDR3))
+    Combined_Datasets[[i]]$Len <- nchar(Combined_Datasets[[i]]$CDR3)
+    
+    Clusters[[i]] <- clonal_clustering(Combined_Datasets[[i]])
+    
+    
+    for(j in 1:length(data_clone[grep(pat[i], names(data_clone))])){
+      
+      data_clone[[n_j+j]] <- merge(Clusters[[i]], data_clone[[n_j+j]], 
+                            by = c('CDR3', 'Majority_V_Gene', 'Majority_J_Gene'),
+                            all = F)
+    }
+
+
+    #TODO -> clonotype to clonotype?
+    
+    tab <- lapply(data_clone[grep(pat[i], names(data_clone))], function(x) unique(x$clonotype))
+    
+    Overlap_Table[[i]] <- table(unlist(tab))
+    
+    n_j <- n_j + length(data_clone[grep(pat[i], names(data_clone))])
+  
+   pdf(paste(fpath, 'All_clone100_Venn_',title[i],'.pdf', sep = ''))
+   
+      
+      venn(tab, ellipse = F, zcolor = col_organs, 
+      lty =   c(1, 1, 1), col = "lightgrey", sncs = 1, ilcs = 1, ilabels = TRUE, box = F)
+  
+      dev.off()
+      
+   pdf(paste(fpath, 'All_clone100_Venn_LNs_only_',title[i],'.pdf', sep = ''))
+   
+      
+      venn(tab[1:4], ellipse = T, zcolor = col_organs[1:4], 
+      lty =   c(1, 1, 1), col = "lightgrey", sncs = 1, ilcs = 1, ilabels = TRUE, box = F)
+  
+      dev.off()
+      
+   pdf(paste(fpath, 'All_clone100_Venn_BM_spleen_',title[i],'.pdf', sep = ''))
+   
+      
+      venn(tab[5:6], ellipse = F, zcolor = col_organs[5:6], 
+      lty =   c(1, 1, 1), col = "lightgrey", sncs = 1, ilcs = 1, ilabels = TRUE, box = F)
+  
+      dev.off()
+}
+
+Combined_Datasets <- do.call(rbind, lapply(data_clone, select_columns))
+
+Combined_Datasets <- unique(Combined_Datasets)
+
+Combined_Datasets$CDR3 <- as.character((Combined_Datasets$CDR3))
+Combined_Datasets$Len <- nchar(Combined_Datasets$CDR3)
+
+Clusters <- clonal_clustering(Combined_Datasets)
+names(Clusters)[names(Clusters) == "clonotype"] <- "clonotype_large"
+
+for(j in 1:length(data_clone)){
+  
+  data_clone[[j]] <- merge(Clusters, data_clone[[j]], 
+                         by = c('CDR3', 'Majority_V_Gene', 'Majority_J_Gene'),
+                         all = F)
+}
+
+# generate new df 'data_clone' and relabel clonotype_lare as "CDR3"
+
+data_cdr3 <- data #old df w/o clone_100 clustering
+data_clone <- data_clone #new df with clone_100 clustering
+for (i in 1:length(data_clone)){
+colnames(data_clone[[i]])[which(names(data_clone[[i]]) == "CDR3")] <- "CDR3_cdr3"
+colnames(data_clone[[i]])[which(names(data_clone[[i]]) == "clonotype_large")] <- "CDR3"
+data_clone[[i]] <- with(data_clone[[i]], data_clone[[i]][order(MAF_Clonal_., decreasing = T), ])
+data_clone[[i]] <- data_clone[[i]][c("CDR3","MAF_Clonal_.", "Majority_V_Gene", "Majority_J_Gene", "Majority_Isotype", "clonotype", "Len.x", "CDR3_cdr3")]
+}
+
+
+```
+
+
+###############################################################################################################
+
+####### ANALYSIS for CLONES (90% CDRH3 a.a. identity, same V, J gene) --> data_clonotype
+
+
+###############################################################################################################
+
+
+#Clustering 90% a.a. similiarity: ALL MICE; use data_clonotype df for clonotypes
+```{r CLONO FOR All MICE COMBINED: Clustering OF ALL MCIE TOGETHER: in list of dfs "data_clonotype", echo=F, cache=T}
+
+
+##################################################################################################
+
+# HELPER FUNCTIONS FOR CLONOTYPING:
+
+##################################################################################################
+
+Combined_Datasets <- list()
+Clusters <- list()
+Overlap_Table <- list()
+
+# Helper function to select the relevant subsets
+
+select_columns <- function(x){
+  x_new <- dplyr::select(x, c('CDR3', 'Majority_V_Gene', 'Majority_J_Gene'))
+  return(x_new)
+}
+
+# Helper function to calculate distance matrix
+
+dist_calc <- function(x){
+  
+  dist_mat <- as.dist(stringdistmatrix(x, x, method = 'hamming')/nchar(x[1])) #divide through nchar in order to get percentage
+  return(dist_mat)
+  
+}
+
+# Function to compute clonotypes
+
+clonal_clustering <- function(data){
+  
+  meta_list <- split(data, 
+                     list(data$Majority_V_Gene, 
+                          data$Majority_J_Gene, 
+                          data$Len))
+  
+  head(meta_list)
+  
+  idxs <- which(sapply(meta_list, function(x) length(x$CDR3)) > 0)
+  
+  meta_list <- meta_list[idxs]
+  
+  dist_mat <- lapply(meta_list, function(x) dist_calc(x$CDR3))
+  
+  # Hierarchical clustering step, complete/single linkage, cut tree at 10% dissimilarity
+  
+  clusts <- lapply(dist_mat, function(x) {
+    if(length(x) > 0){
+      return(cutree(hclust(x, method = 'single'), h = 0.1))
+    } else {
+      return(1)
+    }
+  }
+  )
+  
+  # Needed to increase the clonotype numbering correctly
+  add_nr <- 0
+  
+  # Renumber clonotypes 
+  for(i in 1:length(clusts)){
+    clusts[[i]] <- clusts[[i]] + add_nr
+    add_nr <- max(clusts[[i]])
+  }
+  
+  meta_list <- do.call(rbind, meta_list)
+  meta_list$clonotype <- unlist(clusts)
+  
+  
+  return(unique(meta_list))
+}
+
+
+
+##################################################################################################
+
+# CLONOTYPING ACROSS ORGANS OF MOUSE:
+
+##################################################################################################
+
+
+# Iterate through data_clonotype sets given by the order in 'pat'
+pat <- c("A-", "B-", "C-", "D-", "E-", "F-") 
+title <- c("A", "B", "C", "D", "E", "F") 
+
+data_clonotype <- data
+
+n_j <- 0
+
+for(i in 1:6){
+    Combined_Datasets[[i]] <- do.call(rbind, lapply(data_clonotype[grep(pat[i], names(data_clonotype))],
+                                                    select_columns))
+    
+    Combined_Datasets[[i]] <- unique(Combined_Datasets[[i]])
+    
+    Combined_Datasets[[i]]$CDR3 <- as.character((Combined_Datasets[[i]]$CDR3))
+    Combined_Datasets[[i]]$Len <- nchar(Combined_Datasets[[i]]$CDR3)
+    
+    Clusters[[i]] <- clonal_clustering(Combined_Datasets[[i]])
+    
+    
+    for(j in 1:length(data_clonotype[grep(pat[i], names(data_clonotype))])){
+      
+      data_clonotype[[n_j+j]] <- merge(Clusters[[i]], data_clonotype[[n_j+j]], 
+                            by = c('CDR3', 'Majority_V_Gene', 'Majority_J_Gene'),
+                            all = F)
+    }
+
+
+    #TODO -> clonotype to clonotype?
+    
+    tab <- lapply(data_clonotype[grep(pat[i], names(data_clonotype))], function(x) unique(x$clonotype))
+    
+    Overlap_Table[[i]] <- table(unlist(tab))
+    
+    n_j <- n_j + length(data_clonotype[grep(pat[i], names(data_clonotype))])
+  
+   pdf(paste(fpath, 'All_Clonotype_Venn_',title[i],'.pdf', sep = ''))
+   
+      
+      venn(tab, ellipse = F, zcolor = col_organs, 
+      lty =   c(1, 1, 1), col = "lightgrey", sncs = 1, ilcs = 1, ilabels = TRUE, box = F)
+  
+      dev.off()
+      
+   pdf(paste(fpath, 'All_Clonotype_Venn_LNs_only_',title[i],'.pdf', sep = ''))
+   
+      
+      venn(tab[1:4], ellipse = T, zcolor = col_organs[1:4], 
+      lty =   c(1, 1, 1), col = "lightgrey", sncs = 1, ilcs = 1, ilabels = TRUE, box = F)
+  
+      dev.off()
+      
+   pdf(paste(fpath, 'All_Clonotype_Venn_BM_spleen_',title[i],'.pdf', sep = ''))
+   
+      
+      venn(tab[5:6], ellipse = F, zcolor = col_organs[5:6], 
+      lty =   c(1, 1, 1), col = "lightgrey", sncs = 1, ilcs = 1, ilabels = TRUE, box = F)
+  
+      dev.off()
+}
+
+Combined_Datasets <- do.call(rbind, lapply(data_clonotype, select_columns))
+
+Combined_Datasets <- unique(Combined_Datasets)
+
+Combined_Datasets$CDR3 <- as.character((Combined_Datasets$CDR3))
+Combined_Datasets$Len <- nchar(Combined_Datasets$CDR3)
+
+Clusters <- clonal_clustering(Combined_Datasets)
+names(Clusters)[names(Clusters) == "clonotype"] <- "clonotype_large"
+
+for(j in 1:length(data_clonotype)){
+  
+  data_clonotype[[j]] <- merge(Clusters, data_clonotype[[j]], 
+                         by = c('CDR3', 'Majority_V_Gene', 'Majority_J_Gene'),
+                         all = F)
+}
+
+
+```
+
+
+
+
+###################################################################################################################################################
+
+FIGURE 1 B
+
+###################################################################################################################################################
+
+# Compare clonal diversity on CDR3 data versus clono data on all mice:
+```{r CLONO FOR All MICE COMBINED: Compare clonal diversity on CDR3 data versus clono data on ALL MICE TOGETHER, echo=F, cache=T}
+
+cdr3 <- sapply(data_clone, function(x) n_distinct(x$CDR3))
+clono <- sapply(data_clonotype, function(x) n_distinct(x$clonotype_large))
+
+
+n_df <- data.frame(clone_100 = cdr3, clone_90 = clono)
+n_df <- tibble::rownames_to_column(n_df, "id")
+n_df <- n_df %>% mutate("percentage"= signif(clone_90/clone_100*100, digits = 3))
+
+n_df <-pivot_longer(n_df , clone_90:clone_100 )
+n_df$id <- with(n_df, ifelse(id %like% 'A-|B-|C-', paste0(id, "_1x"), paste0(id, "_3x")))
+unique(n_df$id)
+
+n_df$.id <- n_df$id
+n_df <- separate(n_df, .id, into = c("Mouse", "temp"), "-", extra = "merge", convert = TRUE) %>% 
+       separate(temp, into = c("organ", "Cohort"), "_", convert = TRUE)
+n_df <- n_df %>% mutate(x = paste(organ, Cohort))
+n_df <- n_df %>% mutate(fill = paste(name, Cohort))
+n_df <- n_df %>% group_by(name, organ, Cohort) %>% mutate("label" = paste0(signif(mean(percentage), digits = 3), "%"))
+n_df$x <- factor(n_df$x, levels = c("aLN-L 1x","aLN-L 3x", "iLN-L 1x","iLN-L 3x", "aLN-R 1x", "aLN-R 3x","iLN-R 1x","iLN-R 3x", "spleen 1x", "spleen 3x", "BM 1x", "BM 3x"))
+
+
+
+col_mouse <- c('#bdc9e1','#74a9cf','#0570b0', '#b2e2e2','#66c2a4','#238b45')
+col_name <- c("grey", "white")
+
+col_fill <- c("white","white", "#3690c0","#41ae76")
+col_cohorts <- rep(c("#2171b5","#41ab5d"),6)
+
+
+############# diversity plot for clones_100:
+
+n_df_clone100 <- n_df %>% dplyr::filter(name == "clone_100")
+
+ggplot(n_df_clone100, aes(x=x, y=value)) +
+   stat_summary(mapping = aes(x=x, y=value), fun = mean, geom = "bar", fill=col_cohorts, color="black", alpha = 0.6) + 
+   geom_point(n_df_clone100, mapping = aes(x=x, y=value, fill=Mouse), shape = 21, size = 3, color = "black") +
+   scale_fill_manual(values = col_mouse) +
+   stat_summary(geom = "errorbar", fun.data = mean_se, width=0.2, colour="black", alpha = 0.9, size=0.5) +
+   labs(y = "Unique clones per organ\n", x ="") +
+   theme_cowplot() +
+   theme(axis.text.x = element_text(angle = 0, size = 14), axis.text.y = element_text(size = 14), axis.ticks.x = element_blank(), axis.title = element_text(size = 14), legend.title = element_text(size = 14, face = "bold"), legend.text = element_text(size = 14))  +
+   scale_y_continuous(expand = c(0, 0), limits = c(0, 3300))
+
+
+```
+
+
+###################################################################################################################################################
+
+FIGURE 1 C
+
+###################################################################################################################################################
+
+
+# Pool data per mouse and compare clonal diversity on CDR3 data versus clono data:
+```{r CLONO FOR All MICE COMBINED: Compare clonal diversity on CDR3 data versus clono data on ALL MICE TOGETHER, echo=F, cache=T}
+
+names(data)
+names(data_clonotype)
+Mice <- c("A-", "B-", "C-", "D-", "E-", "F-")
+Mouse <- c("A-1x", "B-1x", "C-1x", "D-3x", "E-3x", "F-3x")
+
+data_all_pool <- list()
+data_clono_pool <- list()
+
+for (m in 1:length(Mice)){
+data_all_pool[[m]] <- ldply(data_clone[grep(Mice[m], names(data_clone))])
+data_clono_pool[[m]] <- ldply(data_clonotype[grep(Mice[m], names(data_clonotype))])
+}
+
+names(data_all_pool) <- Mouse
+names(data_clono_pool) <- Mouse
+
+cdr3 <- sapply(data_all_pool, function(x) n_distinct(x$CDR3))
+clono <- sapply(data_clono_pool, function(x) n_distinct(x$clonotype_large))
+
+
+n_df <- data.frame(clone_100 = cdr3, clone_90 = clono)
+solo_df <- tibble::rownames_to_column(n_df, "id")
+solo_df$id <- mgsub(c("A-1x", "B-1x", "C-1x", "D-3x", "E-3x", "F-3x"), x = solo_df$id, replacement = c("1x-A", "1x-B", "1x-C", "3x-D", "3x-E", "3x-F"))
+n_df <- tibble::rownames_to_column(n_df, "id")
+n_df <- n_df %>% mutate("percentage"= signif(clone_90/clone_100*100, digits = 3))
+
+n_df <-pivot_longer(n_df , clone_90:clone_100 )
+unique(n_df$id)
+
+n_df$.id <- n_df$id
+n_df <- separate(n_df, .id, into = c("mouse", "cohort"), "-", extra = "merge", convert = TRUE) 
+n_df <- n_df %>% mutate(fill = paste(name, cohort))
+n_df$id <- mgsub(c("A-1x", "B-1x", "C-1x", "D-3x", "E-3x", "F-3x"), x = n_df$id, replacement = c("1x-A", "1x-B", "1x-C", "3x-D", "3x-E", "3x-F"))
+
+col_mouse <- c('#bdc9e1','#74a9cf','#0570b0', '#b2e2e2','#66c2a4','#238b45')
+col_name <- c("grey", "white")
+col_fill <- c("#3690c0","#41ae76", "#a6bddb", "#99d8c9")
+col_cohorts_1x_3x <- c("#3690c0", "#41ae76")
+
+
+ggplot(solo_df, aes(x=id, y=clone_90)) +
+  geom_col(solo_df, mapping = aes(x=id, y=clone_90, fill=id), color = "black") +
+  scale_fill_manual(values = col_mouse) +
+  labs(y = "Unique clonotypes per mouse\n", x ="") +
+  theme_cowplot() +
+  theme(text = element_text(size = 14), axis.text.y = element_text(size = 14), axis.text.x = element_text(size = 14), axis.ticks.x = element_blank())+
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 5000))
+
+
+load_pkg('rstatix')
+load_pkg("ggpubr")
+
+  ggplot(solo_df, aes(x=id, y=clone_100)) +
+  geom_col(solo_df, mapping = aes(x=id, y=clone_100, fill=id), color = "black") +
+  scale_fill_manual(values = col_mouse) +
+  labs(y = "Unique clones per mouse\n", x ="") +
+  theme_cowplot() +
+  theme(text = element_text(size = 14), axis.text.y = element_text(size = 14), axis.text.x = element_text(size = 14), axis.ticks.x =   element_blank())+ 
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 6000))
+
+
+
+#statistical testing:
+solo_df$cohort <- strsplit2(solo_df$id, split = "-")[,1]
+bar <- ggplot(solo_df, aes(x=cohort, y=clone_90)) +
+  stat_summary(fun.y = mean, geom = "bar", colour="black") + 
+  stat_summary(geom = "errorbar", fun.data = mean_se, width=0.2, colour="black", alpha = 0.9, size=0.5) 
+
+bar + stat_compare_means(method = "t.test", paired = F) #Welch t-test
+
+
+```
+
+
+###################################################################################################################################################
+
+FIGURE 1 D
+
+###################################################################################################################################################
+
+```{r For Top N CDR3 plots, include=FALSE, cache=TRUE}
+
+
+################################################################
+
+# CAVE: check that dfs are ordered for MAF_CLonal_.
+
+################################################################
+
+# use data_clone df:
+dataN <- data_clone
+names(dataN) <- mgsub(c("A-", "B-", "C-", "D-", "E-", "F-"), x=names(data),replacement= c("1x-A_", "1x-B_", "1x-C_", "3x-D_", "3x-E_", "3x-F_"))
+
+
+#modify tcR function:
+vis.top.proportions <- function (.data, .head = c(1, 2, 3, 10, 100, 1000, max(sapply(data, function(x) nrow(x)))), .col = "MAF_Clonal_.") {
+  if (has.class(.data, 'data.frame')) {
+    .data <- list(Sample = .data)
+  }
+
+  res <- sapply(.head, function (h) top.proportion(.data, h, .col))
+  tmp <- res
+  if (is.null(dim(tmp))) {
+    tmp <- t(as.matrix(tmp))
+    res <- t(as.matrix(res))
+  }
+  for (i in 2:ncol(res)) {
+    tmp[,i] <- res[,i] - res[,i-1]
+  }
+  res <- tmp
+  colnames(res) <- paste0('[', c(1, .head[-length(.head)] + 1), ':', .head, ')')
+  res <- as.data.frame(res)
+  res$People <- factor(row.names(res), levels = row.names(res))
+  res <- melt(res)
+  res$mouse  <- gsub("[_][a-zA-Z].*","", res$People)
+  print(res)
+  par(family = 'Helvetica')
+  
+
+  ggplot() + geom_bar(aes(x = People, y = value, fill = variable), data = res, stat = 'identity', position = 'stack', colour = 'black')+
+    theme_linedraw()  +
+    theme(axis.text.x  = element_text(angle=90, vjust = .5)) +
+    ylab("Clonal proportion\n") +
+
+    guides(fill = guide_legend("Clonal frequency rank")) +scale_fill_brewer(palette="YlGnBu") +
+    theme(panel.grid.minor = element_blank(), panel.background = element_rect( fill = "#f2f2f2"), axis.line = element_line(colour = "black")) 
+}
+
+
+top.proportion <- function (.data, .head = 10, .col = "Read.count") 
+{
+    if (has.class(.data, "list")) {
+        return(sapply(.data, top.proportion, .head = .head, .col = .col))
+    }
+    sum(head(.data[, .col], .head))/sum(.data[, .col])
+}
+
+has.class <- function (.data, .class) 
+{
+    .class %in% class(.data)
+}
+
+
+
+
+# plot:
+p <- vis.top.proportions(dataN, .col = 'MAF_Clonal_.') + facet_wrap(~ factor(mouse, levels = c("1x-A", "1x-B", "1x-C", "3x-D", "3x-E", "3x-F")), scale = "free_x", ncol = 3) + theme_cowplot()  + theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.ticks.x = element_blank(), axis.title = element_text(size = 14), axis.text = element_text(size = 14), strip.text = element_text(size=20), legend.title = element_text(face = "bold"))
+dev.off()
+
+# change box color / facet_wrap:
+
+# New colors:
+fill_colors <- c('#66c2a4', '#66c2a4','#66c2a4','#74a9cf','#74a9cf','#74a9cf')
+
+# Find strips glob
+gt <- ggplot_gtable(ggplot_build(p))
+strips <- which(startsWith(gt$layout$name,'strip'))
+
+# Change the fill color of each strip
+for (s in seq_along(strips)) {
+  gt$grobs[[strips[s]]]$grobs[[1]]$children[[1]]$gp$fill <- fill_colors[s]
+}
+
+
+plot(gt) 
+setwd(fpath)
+
+
+```
+
+
+###################################################################################################################################################
+
+FIGURE 1 E
+
+###################################################################################################################################################
+
+```{r Vgene usage / Pearson correlation heatmap on cohorts, include=FALSE, cache=TRUE}
+
+#GENERATE VGENE MATRIX with COUNTS:
+
+#use data_clone and rename column names for immunarch functions:
+data_clone_immunarch <- data_clone
+
+for (i in 1:length(data_clone_immunarch)){
+colnames(data_clone_immunarch[[i]])[which(names(data_clone_immunarch[[i]]) == "CDR3")] <- "CDR3.aa"
+colnames(data_clone_immunarch[[i]])[which(names(data_clone_immunarch[[i]]) == "MAF_Clonal_.")] <- "Clones"
+colnames(data_clone_immunarch[[i]])[which(names(data_clone_immunarch[[i]]) == "Majority_V_Gene")] <- "V.name"
+}
+names(data_clone_immunarch) <- names(data_clone)
+
+names(data_clone_immunarch) <- ifelse(names(data_clone_immunarch) %like% 'A-|B-|C-', paste0( names(data_clone_immunarch), "_1x"), paste0( names(data_clone_immunarch), "_3x"))
+names(data_clone_immunarch) <- mgsub(c("-aLN-L", "-iLN-L", "-aLN-R", "-iLN-R", "-spleen", "-BM"), x=names(data_clone_immunarch),replacement= c("_aLN-L", "_iLN-L", "_aLN-R", "_iLN-R", "_spleen", "_BM"))
+names(data_clone_immunarch)
+
+# Create Vgene counts matrix:
+VGeneList_counts <- lapply(data_clone_immunarch, function(x) data.frame(VGene = names(table(x$V.name)), Counts = as.numeric(table(x$V.name))))
+Vgene_mat_counts <- Reduce(function(...) merge(..., all=T, by = "VGene"), VGeneList_counts)
+Vgene_mat_counts[is.na(Vgene_mat_counts)] <- 0
+Vgenes <- Vgene_mat_counts[,1]
+Vgene_mat_counts <- as.matrix(Vgene_mat_counts[ ,2:length(Vgene_mat_counts[1,])])
+colnames(Vgene_mat_counts)  <- names(data_clone_immunarch)
+row.names(Vgene_mat_counts) <- Vgenes
+
+
+########### ########### ########### ########### ########### ########### ########### 
+
+########### PEARSON CORRELATION: 
+
+########### ########### ########### ########### ########### ########### ########### 
+cors <- cor(Vgene_mat_counts, method="pearson")
+diag(cors) <- NA
+breaksList = seq(0.1, 1, by = 0.01) # for same color range across plots
+
+
+#create annotaion for legend lables and colors:
+annotation <- data.frame(strsplit2(colnames(Vgene_mat_counts), split = "_"), row.names = colnames(Vgene_mat_counts), stringsAsFactors = T)
+colnames(annotation) <- c("Mouse", "Organ", "Cohort")
+annotation$Cohort <- factor(annotation$Cohort, levels = c("1x", "3x"))
+annotation$Organ <- factor(annotation$Organ, levels = c("aLN-L", "iLN-L", "aLN-R", "iLN-R", "spleen", "BM"))
+annotation$SampleGroup <- factor(paste(annotation$Mouse, sep = "_", annotation$Organ, annotation$Cohort))
+annotation$Mouse <- mgsub(c("A", "B", "C", "D", "E", "F"), x=annotation$Mouse,replacement= c("1x-A", "1x-B", "1x-C", "3x-D", "3x-E", "3x-F"))
+annotation$Mouse <- factor(annotation$Mouse, levels =  c("1x-A", "1x-B", "1x-C", "3x-D", "3x-E", "3x-F"))
+
+rownames(cors) <- mgsub(c("_1x", "_3x"), x=rownames(cors),replacement= c("", ""))
+colnames(cors) <- mgsub(c("_1x", "_3x"), x=colnames(cors),replacement= c("", ""))
+
+# plot:
+
+# cohort 1x:
+
+pheatmap(cors[rownames(cors) %like% "A_|B_|C_", colnames(cors) %like% "A_|B_|C_"],
+         #main="Pearson correlation of V-gene repertoires across cohort-1x",
+         scale="none",
+         color = colorRampPalette(brewer.pal(n = 7, name = "Purples"))(length(breaksList)),# Defines the vector of colors for the legend (it has to be of the same lenght of breaksList)
+         breaks = breaksList, # Sets the breaks of the color scale as in breaksList
+         border_color=NA,
+         show_colnames = T,
+         show_rownames = T,
+         fontsize = 14,
+         annotation_col=annotation[, c("Organ", "Mouse")],
+         annotation_colors=list(Organ=setNames(col_organs, levels(annotation$Organ)), 
+                                Mouse=setNames(col_mouse, levels(annotation$Mouse))))
+
+dev.off()
+
+# cohort 3x:
+
+pheatmap(cors[rownames(cors) %like% "D_|E_|F_", colnames(cors) %like% "D_|E_|F_"],
+         #main="Pearson correlation of V-gene repertoires across cohort-3x",
+         scale="none",
+         color = colorRampPalette(brewer.pal(n = 7, name = "Purples"))(length(breaksList)),# Defines the vector of colors for the legend (it has to be of the same lenght of breaksList)
+         breaks = breaksList, # Sets the breaks of the color scale as in breaksList
+         border_color=NA,
+         show_colnames = T,
+         show_rownames = T,
+         fontsize = 14,
+         annotation_col=annotation[, c("Organ", "Mouse")],
+         annotation_colors=list(Organ=setNames(col_organs, levels(annotation$Organ)), 
+                                Mouse=setNames(col_mouse, levels(annotation$Mouse))))
+dev.off()
+
+
+# plots per mouse:
+# Iterate through data_clonotype sets given by the order in 'pat'
+# modify names:
+
+pat <- c("A_", "B_", "C_", "D_", "E_", "F_") 
+title <- c("1x-A", "1x-B", "1x-C", "3x-D", "3x-E", "3x-F") 
+
+corsmouse <- list()
+for(i in 1:length(pat)){
+corsmouse[[i]] <- cors[rownames(cors) %like% pat[i], colnames(cors) %like% pat[i]]
+pdf(paste(fpath, paste0('heatmap_Pearson_', title[i], '.pdf')), family = "Helvetica",  width = 7.5, height = 6.5)
+pheatmap(corsmouse[[i]],
+         main=paste0("Pearson correlation of V-gene repertoires: Mouse ", title[i]),
+         scale="none",
+         color = colorRampPalette(brewer.pal(n = 7, name = "Purples"))(length(breaksList)),
+         breaks = breaksList, # Sets the breaks of the color scale as in breaksList
+         border_color=NA,
+         show_colnames = T,
+         show_rownames = T,
+         cluster_cols = T,
+         cluster_rows = T,
+         fontsize = 12,
+         legend_labels = "Pearson correlation coefficient",
+         annotation_col=annotation[, c("Organ", "Mouse")],
+         annotation_colors=list(Organ=setNames(col_organs, levels(annotation$Organ)), 
+                                Mouse=setNames(col_mouse, levels(annotation$Mouse))))
+dev.off()
+}
+
+
+
+```
+
+
+
+###################################################################################################################################################
+
+FIGURE 3 B
+
+###################################################################################################################################################
+
+
+```{r VennDiagram between organs data: check unique CDR3s, echo=FALSE, cache=TRUE}
+
+
+Mice  <- c("A", "B", "C", "D", "E", "F")
+pat <- c("A-", "B-", "C-", "D-", "E-", "F-")
+
+for (mouse in 1:length(pat)){
+mousedfs <- data_clone[grep(pat[mouse], names(data_clone))]
+
+cdr3list <- lapply(mousedfs, function(x) unique(get_field(x, 'CDR3'))) 
+names(cdr3list) <- c("aLN-L", "iLN-L", "aLN-R", "iLN-R","spleen","BM")
+
+# Generate and save Venn diagrams:
+
+    #all organs
+   pdf(paste(fpath,'Venn_clones_all_',Mice[[mouse]],'.pdf', sep = ''))
+
+    venn(cdr3list, ellipse = F, zcolor = col_organs,
+    lty =   c(1, 1, 1), col = "lightgrey", sncs = 1.5, ilcs = 1.5, ilabels = TRUE, box = F)
+
+    dev.off()
+
+}
+  
+```  
+
+
+
+
+
+###################################################################################################################################################
+
+FIGURE 3 C
+
+###################################################################################################################################################
+
+
+```{r CDR3 FOR ALL MICE COMBINED: Make CDR3 heatmap on all mice together , include=FALSE, cache=TRUE}
+
+library(immunarch)
+
+# create clonal overlap matrices via immunarch:
+# rename CDR3 column and name dataframes for immunarch functions --> data_immunarch:
+
+data_clone_immunarch <- data_clone
+
+for (i in 1:length(data_clone_immunarch)){
+colnames(data_clone_immunarch[[i]])[which(names(data_clone_immunarch[[i]]) == "CDR3")] <- "CDR3.aa"
+colnames(data_clone_immunarch[[i]])[which(names(data_clone_immunarch[[i]]) == "MAF_Clonal_.")] <- "Clones"
+}
+names(data_clone_immunarch) <- names(data_clone)
+
+names(data_clone_immunarch) <- mgsub(c("A-", "B-", "C-", "D-", "E-", "F-"),x= names(data_clone),replacement= c("A_", "B_", "C_", "D_", "E_", "F_"))
+
+names(data_clone_immunarch) <- ifelse(names(data_clone_immunarch) %like% 'A_|B_|C_', paste0( names(data_clone_immunarch), "_1x"), paste0( names(data_clone_immunarch), "_3x"))
+names(data_clone_immunarch)
+
+
+jaccard_all <- repOverlap(data_clone_immunarch, .method = "jaccard", .verbose = T)
+cosine_all <- repOverlap(data_clone_immunarch, .method = "cosine", .verbose = T) 
+
+
+# generate annotation table:
+
+annotation <- data.frame(strsplit2(colnames(cosine_all), split = "_"), row.names = colnames(cosine_all), stringsAsFactors = T)
+colnames(annotation) <- c("Mouse", "Organ", "Cohort")
+annotation$Mouse <- mgsub(c("A", "B", "C", "D", "E", "F"), x=annotation$Mouse,replacement= c("A-1x", "B-1x", "C-1x", "D-3x", "E-3x", "F-3x"))
+annotation$Mouse <- factor(annotation$Mouse, levels =  c("A-1x", "B-1x", "C-1x", "D-3x", "E-3x", "F-3x"))
+annotation$Organ <- factor(annotation$Organ, levels = c("aLN-L", "iLN-L", "aLN-R", "iLN-R", "spleen", "BM"))
+annotation$Cohort <- factor(annotation$Cohort, levels = c("1x", "3x"))
+annotation$SampleGroup <- factor(paste(annotation$Mouse, sep = "_", annotation$Organ, annotation$Cohort))
+
+rownames(cosine_all) <- mgsub(c("_1x", "_3x"), x=rownames(cosine_all),replacement= c("", ""))
+colnames(cosine_all) <- mgsub(c("_1x", "_3x"), x=colnames(cosine_all),replacement= c("", ""))
+
+pdf(paste(fpath, 'heatmap_ALL_CDR3_cosine','.pdf', sep = ''), family = "Helvetica", width = 11, height = 9)
+pheatmap(cosine_all,
+         #main="Pairwise cosine overlap between clones",
+         scale="none",
+         color = colorRampPalette(brewer.pal(11,'Purples'))(100),
+         border_color=NA,
+         fontsize = 14,
+         show_colnames = F,
+         show_rownames = T,
+         cluster_cols = F,
+         na_col = "#969696",
+         cluster_rows = F,
+         annotation_col=annotation[, c("Organ", "Mouse")],
+         annotation_colors=list(Organ=setNames(col_organs, levels(annotation$Organ)),
+                                Mouse=setNames(col_mouse, levels(annotation$Mouse))),
+         gaps_col = seq(6, 36, by=6))
+dev.off()
+
+
+
+rownames(jaccard_all) <- mgsub(c("_1x", "_3x"), x=rownames(jaccard_all),replacement= c("", ""))
+colnames(jaccard_all) <- mgsub(c("_1x", "_3x"), x=colnames(jaccard_all),replacement= c("", ""))
+
+pdf(paste(fpath, 'heatmap_ALL_CDR3_jaccard','.pdf', sep = ''), family = "Helvetica", width = 11, height = 9)
+pheatmap(jaccard_all,
+         #main="Pairwise jaccard overlap between clones",
+         scale="none",
+         color = colorRampPalette(brewer.pal(11,'Purples'))(100),
+         border_color=NA,
+         fontsize = 14,
+         show_colnames = F,
+         show_rownames = T,
+         cluster_cols = F,
+         cluster_rows = F,
+         na_col = "#969696",
+         annotation_legend = T,
+         annotation_col=annotation[, c("Organ", "Mouse")],
+         annotation_colors=list(Organ=setNames(col_organs, levels(annotation$Organ)),
+                                Mouse=setNames(col_mouse, levels(annotation$Mouse))),
+         gaps_col = seq(6, 36, by=6))
+dev.off()
+
+
+
+
+```
+
+
+
+###################################################################################################################################################
+
+FIGURE 3 A
+
+###################################################################################################################################################
+
+
+
+#create ORGAN NETWORK PLOTS WITH PIE CHARTs_JACCARD: -specific and shared:
+```{r network formation between organs_jaccard, echo=FALSE, cache=TRUE}
+
+#https://stackoverflow.com/questions/5665599/range-standardization-0-to-1-in-r
+
+library(tidygraph)
+library(tidyverse)
+library(igraph)
+library(ggraph)
+library(graphlayouts)
+library(ggforce)
+library(scatterpie)
+library(scatterpie)
+library(oaqc)
+
+#Preparing data:
+names(data_clone) <- mgsub(c("-aLN-L", "-iLN-L", "-aLN-R", "-iLN-R", "-spleen", "-BM"),x= names(data_clone),replacement= c("_aLN-L", "_iLN-L", "_aLN-R", "_iLN-R", "_spleen", "_BM"))
+
+Mice <- c("A_", "B_", "C_", "D_", "E_", "F_")
+cdr3_ov_matrix <- list()
+short <- list()
+df <- list()
+long <- list()
+
+for (m in Mice){
+    input <- data_clone[grep(m, names(data_clone))]
+
+#make matrix for each organ:
+for (a in seq(1:6)){
+cdr3_ov_matrix[[m]][[a]] <- matrix(nrow = length(unique(input[[a]]$CDR3)), ncol = 6)
+  
+  for (i in seq(1:6)){
+   for (j in 1:length(input[[a]]$CDR3)){
+     if (as.character(input[[i]]$CDR3[j]) %in% as.character(input[[a]]$CDR3)){
+       cdr3_ov_matrix[[m]][[a]][j,i] <- 1
+     }
+     else{
+        cdr3_ov_matrix[[m]][[a]][j,i] <- 0
+     }
+    }
+  }
+
+cdr3_ov_matrix[[m]][[a]] <- cbind(cdr3_ov_matrix[[m]][[a]], rowSums(cdr3_ov_matrix[[m]][[a]][,1:6]) )
+rownames(cdr3_ov_matrix[[m]][[a]]) <- input[[a]]$CDR3
+colnames(cdr3_ov_matrix[[m]][[a]]) <- c(names(input)[1:6], "Sum")
+names(cdr3_ov_matrix[[m]])[[a]] <- names(input)[[a]]
+}
+
+
+df[[m]] <- lapply(cdr3_ov_matrix[[m]], function(x) as.data.frame(x))    
+for (k in 1:6){
+short[[m]][[k]] <- as.data.frame(table(df[[m]][[k]]$Sum)) %>% mutate(percentage = Freq/sum(Freq) * 100)
+
+}
+names(short[[m]]) <- names(df[[m]])
+long[[m]] <- ldply(short[[m]])
+}
+
+
+
+longdf <- ldply(long) %>% dplyr::arrange(Var1) 
+library(reshape2)
+longdf_ov <- dcast(longdf, .id ~ Var1)
+longdf_ov$name <- longdf_ov$.id
+longdf_ov  <- separate(longdf_ov, name, into = c("mouse", "organ"), "_", extra = "merge", convert = T) 
+longdf_ov1 <- longdf_ov[c(1,2,8,9)]
+longdf_ov1$ov <- 100 - longdf_ov1$`1` 
+longdf_ov1_split <- split(longdf_ov1, longdf_ov1$organ)
+
+
+names(longdf_ov1_split$`aLN-L`)[c(2,5)] <- paste0(names(longdf_ov1_split$`aLN-L`)[c(2,5)] ,"_aLN-L")
+names(longdf_ov1_split$`iLN-L`)[c(2,5)] <- paste0(names(longdf_ov1_split$`iLN-L`)[c(2,5)] ,"_iLN-L")
+names(longdf_ov1_split$`aLN-R`)[c(2,5)] <- paste0(names(longdf_ov1_split$`aLN-R`)[c(2,5)] ,"_aLN-R")
+names(longdf_ov1_split$`iLN-R`)[c(2,5)] <- paste0(names(longdf_ov1_split$`iLN-R`)[c(2,5)] ,"_iLN-R")
+names(longdf_ov1_split$`spleen`)[c(2,5)] <- paste0(names(longdf_ov1_split$`spleen`)[c(2,5)] ,"_spleen")
+names(longdf_ov1_split$`BM`)[c(2,5)] <- paste0(names(longdf_ov1_split$`BM`)[c(2,5)] ,"_BM")
+
+
+jacc_mat <- jaccard_all
+
+jacc_df <- setNames(melt(jacc_mat), c('from', 'to', 'jaccard similarity'))[,1:3]
+jacc_df[is.na(jacc_df)] <- 0
+nodes <- as.data.frame(names(data_clone))
+nodes$cdr3 <- sapply(data_clone, function(x) n_distinct(x$CDR3))
+nodes$cdr3 <- scales::rescale(nodes$cdr3, to = c(0.2,0.9))
+nodes$.id <- nodes$`names(data_clone)`
+nodes <- merge(x = nodes, y = longdf_ov1_split$`aLN-L`[,c(1,2,5)], by = ".id", all.x=TRUE)
+nodes <- merge(x = nodes, y = longdf_ov1_split$`iLN-L`[,c(1,2,5)], by = ".id", all.x=TRUE)
+nodes <- merge(x = nodes, y = longdf_ov1_split$`aLN-R`[,c(".id", "1_aLN-R", "ov_aLN-R")], by = ".id", all.x=TRUE)
+nodes <- merge(x = nodes, y = longdf_ov1_split$`iLN-R`[,c(1,2,5)], by = ".id", all.x=TRUE)
+nodes <- merge(x = nodes, y = longdf_ov1_split$`spleen`[,c(1,2,5)], by = ".id", all.x=TRUE)
+nodes <- merge(x = nodes, y = longdf_ov1_split$`BM`[,c(1,2,5)], by = ".id", all.x=TRUE)
+nodes <- separate(nodes, `names(data_clone)`, into = c("mouse", "organ"), "_", extra = "merge", convert = T) 
+nodes$organ <- factor(nodes$organ, levels = c("aLN-L", "iLN-L", "iLN-R", "aLN-R", "spleen", "BM"))
+nodes$mouse <- with(nodes, ifelse(mouse %like% 'A|B|C', paste0(mouse, "-1x"), paste0(mouse, "-3x")))
+nodes[is.na(nodes)] <- 0
+nodes <- nodes[order(nodes$mouse,nodes$organ),]
+
+net.tidy3 <- tbl_graph(nodes = nodes, edges = jacc_df, directed = F)
+
+
+V(net.tidy3)$x <- c(-5.5 ,-5.5,0,0,-2.75,-2.75)
+V(net.tidy3)$y <- c(2.5 ,-1, -1 ,2.5 , 1.8, -0.4)
+data_gg2 <- igraph::as_data_frame(net.tidy3, "vertices")
+
+q <- ggraph(net.tidy3, "manual", x =x, y = y) +
+  geom_edge_link0(aes(edge_width = `jaccard similarity`), edge_colour = "grey66")+
+    scale_fill_manual(values = c('#346e96', "#80b1d3",
+   '#114060',"#1f78b4",
+   '#59be42','#ccebc5',
+   '#368d7e', "#8dd3c7",
+   '#fa8603',"#fdb462",
+   '#f93b26', "#fb8072")) +
+    geom_scatterpie(aes(x=x, y=y, r = cdr3),
+    data = data_gg2,
+    cols = names(data_gg2[,5:16]),
+    colour = "black",
+  ) +
+  scale_edge_width_continuous(range = c(0.1,3))+
+  theme_graph()+
+  geom_scatterpie_legend(igraph::as_data_frame(net.tidy3, "vertices")$cdr3, n = 3, x=-2, y=-3) +
+  facet_nodes(~mouse, ncol =3, dir = "v") +
+  theme_graph(foreground = "grey66")+
+  theme(strip.text.x = element_text(size = 10))
+q
+
+setwd(fpath)
+
+```
+
+
