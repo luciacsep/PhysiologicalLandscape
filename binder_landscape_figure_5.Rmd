@@ -1,0 +1,841 @@
+---
+title: "binder_landscape_figure_5"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r clean-up and load_pkg , include=FALSE}
+
+rm(list=ls())
+
+
+# Helper function to load packages. If package is not found, R tries to install it.
+
+load_pkg <- function(pkg){
+  if(!require(pkg, character.only = T)) {
+    install.packages(pkg)
+    library(pkg, character.only = T)
+  }
+}
+
+```
+
+
+```{r libraries/packages, include=FALSE, cache=TRUE}
+
+library(plyr)
+load_pkg('gplots') # Load gplots before venn -> overrides venn function
+load_pkg('dplyr')
+load_pkg('venn')
+load_pkg('ggplot2')
+load_pkg('cowplot')
+load_pkg('pheatmap')
+library(RColorBrewer)
+load_pkg('plotrix')
+library(tidyr)
+library(immunarch)
+library(textclean)
+load_pkg('stringr')
+load_pkg('stringdist')
+
+```
+
+
+```{r helper functions, include=FALSE, cache=TRUE}
+
+
+# Helper function to extract the field of valid CDR3s from mixcr sort.csv files
+get_field_sort <- function(dataset, field){
+  
+  idx <- which(names(dataset) == field)
+  clmns <- dataset[, idx]
+  
+  return(clmns)
+}
+
+```
+
+
+```{r colors}
+
+# Different color palettes:
+
+col_palettes <- list(c("#f1eef6","#045a8d","#2b8cbe"),
+                     c("#edf8fb","#810f7c", "#b3cde3"),
+                     c("#edf8fb","#006d2c","#2ca25f"),
+                     c("aquamarine3", "slateblue4", "snow3"))
+
+col_mouse <- c('#bdc9e1','#74a9cf','#0570b0', '#b2e2e2','#66c2a4','#238b45')
+col_cohort <- c("#3690c0", "#02818a")
+col_organs <- c("#ccebc5", "#8dd3c7", "#1f78b4", "#80b1d3", "#fdb462", "#fb8072")
+
+myPalette <- c(brewer.pal(9, "Set1"), brewer.pal(8, "Set2"))
+myPalette2 <-  c('#e6194b', '#4363d8', '#3cb44b', '#984EA3', '#f58231', '#ffe119', '#F781BF', '#808080', "#3690c0", "#02818a", '#98BFDB', '#bcf60c', '#008080', '#e6beff', '#E5C494', '#000075', '#CD00CD', '#aaffc3', '#808000', '#9a6324', '#fffac8', '#800000', '#000000', '#ffffff')
+colors <- colorRampPalette(rev(brewer.pal(11, "Spectral")))(100)
+colorsBuRd <- colorRampPalette(rev(brewer.pal(11, "RdBu")))(100)
+
+col_3mice <- c("#8dd3c7", "#1f78b4", "#fb8072")
+
+library(RColorBrewer)
+qual_col_pals <- brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector <- unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+
+col_grey <- rep(c("grey", "white"), 60)
+
+col_25 <- c("#89C5DA", "#D3D93E", "#006d2c", "#C84248", "#253494", "#C0717C", "grey", "#5F7FC7", 
+"#b2abd2", "#fe9929", "#66c2a5", "#508578", "#D7C1B1", "#689030", "#AD6F3B", "#fed976", 
+"#673770", "#41b6c4", "#652926", "#7FDCC0", "#f7fbff", "#66c2a5", "#5E738F", "#fc9272", 
+"#8A7C64", "#599861")
+```
+
+
+
+```{r import and pre-process data, include=FALSE, cache=TRUE}
+
+ypath <- '/data/yeast/'
+mpath <- '/data/mice/'
+fpath <- '/data/figures/'
+opath <- '/data/output/'
+
+# Import yeast data:
+
+files <- grep('.txt', list.files(ypath, full.names = TRUE), value = TRUE)
+
+yeast <- list()
+for (i in 1:length(files)){
+yeast[[i]] <- read.delim(files[i])
+yeast[[i]] <- yeast[[i]][!yeast[[i]]$cloneCount < 2, ] 
+yeast[[i]] <- dplyr::rename(yeast[[i]], CDR3 = aaSeqImputedCDR3) #rename column to 'CDR3'
+yeast[[i]] <- yeast[[i]][yeast[[i]]$CDR3 != 0,]#remove rows with no CDR3
+}
+names(yeast) <- sapply(strsplit(files, split = '[/_.]'), function(x) x[8])
+
+
+# merge all files per mouse and keep only unique CDR3s::
+
+yeast$`yeast_D` <- ldply(yeast[names(yeast) %like% "D-"])[!duplicated(ldply(yeast[names(yeast) %like% "D-"])[,'CDR3']),]
+yeast$`yeast_E` <- ldply(yeast[names(yeast) %like% "E-"])[!duplicated(ldply(yeast[names(yeast) %like% "E-"])[,'CDR3']),]
+yeast$`yeast_F` <- ldply(yeast[names(yeast) %like% "F-"])[!duplicated(ldply(yeast[names(yeast) %like% "F-"])[,'CDR3']),]
+
+
+```
+
+
+
+```{r Load mice data, include=FALSE, cache=TRUE}
+
+# MAF mice data:
+
+files <- grep('.txt', list.files(mpath, full.names = TRUE), value = TRUE)
+
+data <- list()
+
+for(i in 1:length(files[1:18])){
+  
+  data[[i]] <- read.delim(files[i])
+  data[[i]] <- data[[i]][data[[i]]$Majority_Isotype != 'Control',]
+  data[[i]] <- data[[i]][data[[i]]$MAF_Clonal_. != 0,]
+  data[[i]]$MAF_Clonotype_.[is.na(data[[i]]$MAF_Clonotype_.)] <- 0
+  data[[i]]$MAF_Clonotype_. <- data[[i]]$MAF_Clonotype_./sum(data[[i]]$MAF_Clonotype_.)*100
+  data[[i]]$MAF_Clonal_. <- data[[i]]$MAF_Clonal_./sum(data[[i]]$MAF_Clonal_.)*100
+  data[[i]] <- with(data[[i]], data[[i]][order(MAF_Clonal_., decreasing = T), ])
+  data[[i]] <- droplevels(data[[i]]) #to remove filtered out rows to appear in subsequent analysis
+}
+names(data) <- sapply(strsplit(files[1:18], split = '[/_.]'), function(x) x[8])
+names(data) <- mgsub(c("-1", "-2", "-3", "-4", "-5", "-6"),x=names(data),replacement= c("-aLN-L", "-iLN-L", "-iLN-R", "-aLN-R", "-spleen", "-BM"))
+names(data) <- mgsub(c("F6-", "H8-", "I9-"),x=names(data),replacement= c("D-", "E-", "F-"))
+data <- data[c("D-aLN-L", "D-iLN-L", "D-aLN-R", "D-iLN-R", "D-spleen", "D-BM", "E-aLN-L", "E-iLN-L", "E-aLN-R", "E-iLN-R", "E-spleen", "E-BM", "F-aLN-L", "F-iLN-L", "F-aLN-R", "F-iLN-R", "F-spleen", "F-BM")]
+
+```
+
+
+
+#Clustering 90% a.a. similiarity, hamming, identical V and J gene: ALL MICE; use data_clonotype df for clonotypes
+```{r CLONO FOR All MICE COMBINED: Clustering OF ALL MCIE TOGETHER: in list of dfs "data_clonotype", echo=F, cache=T}
+
+
+##################################################################################################
+
+# HELPER FUNCTIONS FOR CLONOTYPING:
+
+##################################################################################################
+
+Combined_Datasets <- list()
+Clusters <- list()
+Overlap_Table <- list()
+
+# Helper function to select the relevant subsets
+
+select_columns <- function(x){
+  x_new <- dplyr::select(x, c('CDR3', 'Majority_V_Gene', 'Majority_J_Gene'))
+  return(x_new)
+}
+
+# Helper function to calculate distance matrix
+
+dist_calc <- function(x){
+  
+  dist_mat <- as.dist(stringdistmatrix(x, x, method = 'hamming')/nchar(x[1])) #divide through nchar in order to get percentage
+  return(dist_mat)
+  
+}
+
+# Function to compute clonotypes
+
+clonal_clustering <- function(data){
+  
+  meta_list <- split(data, 
+                     list(data$Majority_V_Gene, 
+                          data$Majority_J_Gene, 
+                          data$Len))
+  
+  head(meta_list)
+  
+  idxs <- which(sapply(meta_list, function(x) length(x$CDR3)) > 0)
+  
+  meta_list <- meta_list[idxs]
+  
+  dist_mat <- lapply(meta_list, function(x) dist_calc(x$CDR3))
+  
+  # Hierarchical clustering step, complete/single linkage, cut tree at 10% dissimilarity
+  
+  clusts <- lapply(dist_mat, function(x) {
+    if(length(x) > 0){
+      return(cutree(hclust(x, method = 'single'), h = 0.1))
+    } else {
+      return(1)
+    }
+  }
+  )
+  
+  # Needed to increase the clonotype numbering correctly
+  add_nr <- 0
+  
+  # Renumber clonotypes 
+  for(i in 1:length(clusts)){
+    clusts[[i]] <- clusts[[i]] + add_nr
+    add_nr <- max(clusts[[i]])
+  }
+  
+  meta_list <- do.call(rbind, meta_list)
+  meta_list$clonotype_90 <- unlist(clusts)
+  
+  
+  return(unique(meta_list))
+}
+
+
+
+##################################################################################################
+
+# CLONOTYPING ACROSS ORGANS OF MOUSE:
+
+##################################################################################################
+
+
+# Iterate through data_clono sets given by the order in 'pat'
+pat <- c("D-", "E-", "F-") 
+title <- c("D", "E", "F") 
+
+data_clono <- data
+
+n_j <- 0
+
+for(i in 1:3){
+    Combined_Datasets[[i]] <- do.call(rbind, lapply(data_clono[grep(pat[i], names(data_clono))],
+                                                    select_columns))
+    
+    Combined_Datasets[[i]] <- unique(Combined_Datasets[[i]])
+    
+    Combined_Datasets[[i]]$CDR3 <- as.character((Combined_Datasets[[i]]$CDR3))
+    Combined_Datasets[[i]]$Len <- nchar(Combined_Datasets[[i]]$CDR3)
+    
+    Clusters[[i]] <- clonal_clustering(Combined_Datasets[[i]])
+    
+    
+    for(j in 1:length(data_clono[grep(pat[i], names(data_clono))])){
+      
+      data_clono[[n_j+j]] <- merge(Clusters[[i]], data_clono[[n_j+j]], 
+                            by = c('CDR3', 'Majority_V_Gene', 'Majority_J_Gene'),
+                            all = F)
+    }
+
+
+    tab <- lapply(data_clono[grep(pat[i], names(data_clono))], function(x) unique(x$clonotype_90))
+    
+    Overlap_Table[[i]] <- table(unlist(tab))
+    
+    n_j <- n_j + length(data_clono[grep(pat[i], names(data_clono))])
+
+   
+      
+      venn(tab, ellipse = F, zcolor = col_organs, 
+      lty =   c(1, 1, 1), col = "lightgrey", sncs = 1, ilcs = 1, ilabels = TRUE, box = F)
+  
+      dev.off()
+   
+      
+      venn(tab[1:4], ellipse = T, zcolor = col_organs[1:4], 
+      lty =   c(1, 1, 1), col = "lightgrey", sncs = 1, ilcs = 1, ilabels = TRUE, box = F)
+  
+      dev.off()
+      
+   
+      venn(tab[5:6], ellipse = F, zcolor = col_organs[5:6], 
+      lty =   c(1, 1, 1), col = "lightgrey", sncs = 1, ilcs = 1, ilabels = TRUE, box = F)
+  
+      dev.off()
+
+}
+
+Combined_Datasets <- do.call(rbind, lapply(data_clono, select_columns))
+
+Combined_Datasets <- unique(Combined_Datasets)
+
+Combined_Datasets$CDR3 <- as.character((Combined_Datasets$CDR3))
+Combined_Datasets$Len <- nchar(Combined_Datasets$CDR3)
+
+Clusters <- clonal_clustering(Combined_Datasets)
+names(Clusters)[names(Clusters) == "clonotype_90"] <- "clonotype_large_90"
+
+for(j in 1:length(data_clono)){
+  
+  data_clono[[j]] <- merge(Clusters, data_clono[[j]], 
+                         by = c('CDR3', 'Majority_V_Gene', 'Majority_J_Gene'),
+                         all = F)
+}
+
+
+data_clono$D_mouse <- ldply(data_clono[names(data_clono) %like% "D-"])
+data_clono$E_mouse <- ldply(data_clono[names(data_clono) %like% "E-"])
+data_clono$F_mouse <- ldply(data_clono[names(data_clono) %like% "F-"])
+
+
+```
+
+
+##############################################################################################################
+
+# FIGURE 5B
+
+##############################################################################################################
+
+
+```{r SAMPLES D, E, F: Graph with binding CDR3s and overlap# to organs, echo=F, cache=T}
+
+
+#Preparing data:
+
+Mice <- c("D", "E", "F")
+title <- c("D-3x", "E-3x", "F-3x") 
+
+
+data_bind <- data_clono
+
+#generate list with yeast binders that are present in corresponding mice:
+bind <- list()
+bind$D_yeast <- data.frame(CDR3= unique(yeast$yeast_D$CDR3[yeast$yeast_D$CDR3 %in% data_clono$D_mouse$CDR3]))
+bind$E_yeast <- data.frame(CDR3= unique(yeast$yeast_E$CDR3[yeast$yeast_E$CDR3 %in% data_clono$E_mouse$CDR3]))
+bind$F_yeast <- data.frame(CDR3= unique(yeast$yeast_F$CDR3[yeast$yeast_F$CDR3 %in% data_clono$F_mouse$CDR3]))
+
+# add binders to BM samples that were not present in BM data. 
+data_bind$`D-BM` <- dplyr::bind_rows(data_bind$`D-BM`, subset(bind$D_yeast, !(CDR3 %in% data_bind$`D-BM`$CDR3)))
+nrow(data_bind$`D-BM`) 
+data_bind$`D-BM`$MAF_Clonal_.[is.na(data_bind$`D-BM`$MAF_Clonal_.)] <- 0 
+data_bind$`E-BM` <- dplyr::bind_rows(data_bind$`E-BM`, subset(bind$E_yeast, !(CDR3 %in% data_bind$`E-BM`$CDR3)))
+data_bind$`E-BM`$MAF_Clonal_.[is.na(data_bind$`E-BM`$MAF_Clonal_.)] <- 0 
+nrow(data_bind$`E-BM`) 
+data_bind$`F-BM` <- dplyr::bind_rows(data_bind$`F-BM`, subset(bind$F_yeast, !(CDR3 %in% data_bind$`F-BM`$CDR3)))
+data_bind$`F-BM`$MAF_Clonal_.[is.na(data_bind$`F-BM`$MAF_Clonal_.)] <- 0 
+nrow(data_bind$`F-BM`)
+
+############################################################
+
+
+unique_binder_df <- list()
+short <- list()
+sep <- list()
+sep_df <- list()
+
+
+for (m in 1:length(Mice)){
+    input <- data_bind[grep(Mice[m], names(data_bind))]
+    unique_binder_df[[m]] <- distinct(bind[[m]], CDR3, .keep_all = T)
+    
+input$bind <- unique_binder_df[[m]]
+  
+
+ov <- list()
+for (i in (1:length(input))){
+ov[[i]] <- input[[i]][input[[i]]$CDR3%in%input$bind$CDR3,]
+write.csv(ov[[i]], paste0(opath, title[[m]], '_', i, '_binder_data_short.csv'))
+}
+names(ov) <- names(input)
+
+
+#make graph with how many binders in 1-6 organs:
+
+cdr3_ov_matrix <- matrix(nrow = nrow(unique(input$bind)), ncol = 6)
+
+for (i in seq(1:6)){
+  for (j in 1:length(input$bind$CDR3)){
+    if (as.character(input$bind$CDR3[j]) %in% as.character(ov[[i]]$CDR3)){
+      cdr3_ov_matrix[j,i] <- 1
+    }
+    else{
+      cdr3_ov_matrix[j,i] <- 0
+    }
+  }
+}
+
+cdr3_ov_matrix <- cbind(cdr3_ov_matrix, rowSums(cdr3_ov_matrix[,1:6]) )
+rownames(cdr3_ov_matrix) <- input$bind$CDR3
+colnames(cdr3_ov_matrix) <- c(names(ov)[1:6], "Sum")
+
+
+
+#exclude Sum = 0
+df <- as.data.frame(cdr3_ov_matrix)
+df <- df[!df$Sum == '0',]
+
+bind_n <- lapply(bind, function(x) as.character(n_distinct(x$CDR3)))
+short[[m]] <- as.data.frame(table(df$Sum)) %>%  mutate(binder = paste0(bind_n[[m]], " binding clones" )) %>% mutate(percentage = Freq/sum(Freq) * 100)
+col_6 <- c("#d0d1e6", "#a6bddb", "#67a9cf", "#3690c0", "#02818a", "#016450")
+
+}
+
+#combine barplots into one graph
+
+names(short) <- Mice
+
+
+short_comb <- ldply(short)
+
+#rename mice:
+short_comb$.id <- mgsub(c("D", "E", "F"), x=short_comb$.id, replacement= c( "3x-D", "3x-E", "3x-F"))
+
+p <- ggplot(short_comb, aes(x = binder, y = percentage, fill = forcats::fct_rev(Var1))) +
+  geom_bar(stat = 'identity', width = 0.7, color = "black") +
+  theme_minimal(base_size = 14) +
+  ylab("Binding clones [%]\n") +
+  xlab(NULL) +
+  guides(fill=guide_legend(title="Occurrence \nin N organs")) +
+  scale_fill_manual(values = rev(c('#d9d9d9', '#41b6c4', '#1d91c0','#225ea8','#253494','#0b297c'))) +
+  scale_y_continuous(breaks = seq(0, 100, by = 10)) +
+  facet_wrap( ~ .id, ncol=3, scales = "free_x") + theme_cowplot() + theme(axis.title = element_text(size = 16), axis.text = element_text(size = 16), strip.text = element_text(size=16), legend.title = element_text(size = 16, face = "bold"), legend.text = element_text(size = 16)) + theme(panel.spacing = unit(3, "lines"))
+
+#change box color:
+
+# Find the colors used
+
+fill_colors <- c('#b2e2e2','#66c2a4','#238b45')
+
+# Find strips glob
+gt<-ggplot_gtable(ggplot_build(p))
+strips <- which(startsWith(gt$layout$name,'strip'))
+
+# Change the fill color of each strip
+for (s in seq_along(strips)) {
+  gt$grobs[[strips[s]]]$grobs[[1]]$children[[1]]$gp$fill <- fill_colors[s]
+}
+
+plot(gt) 
+
+```
+
+
+
+##############################################################################################################
+
+# FIGURE 5C
+
+##############################################################################################################
+
+
+```{r Heatmap for binders only, echo=F, cache=T}
+
+library(immunarch)
+library(gridExtra)
+
+#extract only binders within each organ:
+
+
+  get_upper_tri<-function(cormat){
+    cormat[lower.tri(cormat)] <- NA
+    return(cormat)
+  }
+  
+   get_lower_tri<-function(cormat){
+    cormat[upper.tri(cormat)] <- NA
+    return(cormat)
+  }
+
+#Extract all CDR3s from organ that match binders:
+Mice <- c("D", "E", "F")
+
+final_clono <- list()
+input <- list()
+bind_CDR3 <- list()
+final_clono <- list()
+final_split <- list()
+imm_ov <- list()
+upper_ov_df<- list()
+upper_ov<- list()
+
+data_bind2 <- data_bind[!names(data_bind) %like% "mouse"]
+
+for (m in 1:length(Mice)){
+input[[m]] <- ldply(data_bind2[grep(Mice[m], names(data_bind2))])
+bind_CDR3[[m]] <-  unique(bind[[m]]$CDR3)
+final_clono[[m]] <- input[[m]][get_field_sort(input[[m]], 'CDR3')%in%bind_CDR3[[m]],]
+names(final_clono)[[m]] <- Mice[[m]]
+final_clono[[m]]$.id <-  factor(final_clono[[m]]$.id, levels=c(paste0(Mice[m],"-aLN-L"), paste0(Mice[m],"-iLN-L"), paste0(Mice[m],"-aLN-R"),paste0(Mice[m],"-iLN-R"), paste0(Mice[m],"-spleen"), paste0(Mice[m],"-BM")))
+final_split[[m]] <- split(final_clono[[m]], final_clono[[m]]$.id)
+
+
+#Preparing data for heatmap:
+
+for (i in 1:length(final_split[[m]])){
+final_split[[m]][[i]] <- dplyr::rename(final_split[[m]][[i]], CDR3.aa= CDR3)
+}
+
+imm_ov[[m]] <- repOverlap(final_split[[m]], .method = "public", .verbose = F)
+
+
+grid.arrange(vis(imm_ov[[m]], .text.size=8) + xlab('') + ylab('') + ggtitle("Binder overlap") + scale_fill_gradient(low="white", high="#54278f"))
+                                                                                                                     setwd(fpath)
+ggsave(file=paste0("binder_heatmap_", Mice[m],".pdf"), width = 10, height = 8)
+
+
+ upper_ov_df[[m]] <- melt(get_upper_tri(imm_ov[[m]]), na.rm = T) #convert to df w/o NAs
+ upper_ov_df[[m]]$Var2 <- factor(upper_ov_df[[m]]$Var2, levels=rev(levels(upper_ov_df[[m]]$Var2)))
+ upper_ov[[m]] <- get_lower_tri(imm_ov[[m]])
+
+
+ 
+  ggplot(upper_ov_df[[m]], aes(Var2, Var1, fill = value))+
+  geom_tile(color = "white")+
+  scale_fill_gradient2(low = "white", mid = "#efedf5", high = "#6a51a3", 
+  name="RSV-F binding HCDR3s") +
+  theme_minimal()+
+  coord_fixed() + 
+  geom_text(aes(Var2, Var1, label = value), color = "black", size = 9) +
+  theme_cowplot() +
+  theme(axis.title.x = element_blank(),
+  axis.text.x = element_text(size = 14),
+  axis.text.y = element_text(size = 14),
+  axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  axis.ticks = element_blank(),
+  legend.position = "none") + 
+  scale_x_discrete(labels= c("BM","spleen","iLN-R","aLN-R","iLN-L"))+
+  scale_y_discrete(labels= rev(c("BM","spleen","iLN-R","aLN-R","iLN-L", "aLN-L"))) 
+}
+
+names(upper_ov_df) <- Mice
+names(upper_ov_df) <- mgsub(c("D", "E", "F"), x=names(upper_ov_df),replacement= c("3x-D", "3x-E", "3x-F"))
+upper_ov_df_comb <- ldply(upper_ov_df)
+ 
+
+p <- ggplot(upper_ov_df_comb, aes(Var2, Var1, fill = value))+
+  geom_tile(color = "white")+
+  scale_fill_gradient2(low = "white", mid = "#efedf5", high = "#6a51a3", 
+  name="RSV-F binding CDRH3s") +
+  theme_minimal()+
+  geom_text(aes(Var2, Var1, label = round(value, digits = 1)), color = "black", size = 8) +
+  scale_x_discrete(labels= c("BM","spleen","iLN-R","aLN-R","iLN-L"))+
+  scale_y_discrete(labels= rev(c("BM","spleen","iLN-R","aLN-R","iLN-L", "aLN-L"))) +
+   facet_wrap(~.id, scale = "free", ncol = 1) + theme_cowplot() +
+  theme(axis.title.x = element_blank(),
+  axis.text.x = element_text(size = 16),
+  axis.text.y = element_text(size = 16),
+  strip.text = element_text(size=16),
+  axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  axis.ticks = element_blank(),
+  legend.position = "none") + theme(panel.spacing = unit(4, "lines"))
+ setwd(fpath)
+
+
+#change box color:
+
+# Find the colors used
+fill_colors <- c('#238b45','#66c2a4','#b2e2e2')
+
+# Find strips glob
+gt<-ggplot_gtable(ggplot_build(p))
+strips <- which(startsWith(gt$layout$name,'strip'))
+
+# Change the fill color of each strip
+for (s in seq_along(strips)) {
+  gt$grobs[[strips[s]]]$grobs[[1]]$children[[1]]$gp$fill <- fill_colors[s]
+}
+
+plot(gt) 
+
+
+
+```
+
+
+
+##############################################################################################################
+
+# FIGURE 5E
+
+##############################################################################################################
+
+
+```{r FREQUENCY - ORGAN Ratio plots within organs including all non-binding CDR3s: include=T, echo=F, cache=T}
+
+#add all CDR3s (non-binding) in grey: 
+
+#Extract all CDR3s from organ that match binders:
+Mice <- c("D", "E", "F")
+data_bind2 <- data_bind[!names(data_bind) %like% "mouse"]
+
+final_bind <- list()
+input <- list()
+bind_CDR3 <- list()
+df_bind <- list()
+all_CDR3 <- list()
+df_bind_no0 <- list()
+all_CDR3_no0 <- list()
+
+
+for (m in 1:length(Mice)){
+input[[m]] <- ldply(data_bind2[grep(Mice[m], names(data_bind2))]) 
+bind_CDR3[[m]] <-  unique(bind[[m]]$CDR3)
+final_bind[[m]] <- input[[m]][get_field_sort(input[[m]], 'CDR3')%in%bind_CDR3[[m]],]
+final_bind[[m]]$.id <-  as.character(final_bind[[m]]$.id, levels=c(paste0(Mice[m],"-aLN-L"), paste0(Mice[m],"-iLN-L"), paste0(Mice[m],"-iLN-R"),paste0(Mice[m],"-aLN-R"), paste0(Mice[m],"-spleen"), paste0(Mice[m],"-BM")))
+
+
+
+df_bind[[m]] <- aggregate(data=final_bind[[m]],cbind(.id,MAF_Clonal_.)~CDR3, function(X) paste(X, collapse=",")) 
+df_bind[[m]]$Count <- sapply(strsplit(df_bind[[m]]$.id,','), uniqueN)
+df_bind[[m]] <- df_bind[[m]] %>% mutate(MAF_Clonal_. = strsplit(as.character(MAF_Clonal_.), ","), .id = strsplit(as.character(.id), ",")) %>% unnest(MAF_Clonal_., .id)
+df_bind[[m]]$MAF_Clonal_. <- as.numeric(df_bind[[m]]$MAF_Clonal_.)
+df_bind[[m]]$.id <- factor(df_bind[[m]]$.id, levels=c(paste0(Mice[m],"-aLN-L"), paste0(Mice[m],"-iLN-L"), paste0(Mice[m],"-iLN-R"),paste0(Mice[m],"-aLN-R"), paste0(Mice[m],"-spleen"), paste0(Mice[m],"-BM")))
+
+
+input[[m]]$bind <- ifelse((as.character(input[[m]]$CDR3))%in%(as.character(bind_CDR3[[m]])), paste0("TRUE"), paste0("FALSE"))
+table(input[[m]]$bind)
+
+all_CDR3[[m]] <- select(input[[m]], .id, CDR3, MAF_Clonal_.) 
+names(all_CDR3)[m] <- Mice[m]
+
+
+all_CDR3[[m]] <- aggregate(data=all_CDR3[[m]],cbind(.id,MAF_Clonal_.)~CDR3, function(X) paste(X, collapse=",")) 
+all_CDR3[[m]]$Count <- sapply(strsplit(all_CDR3[[m]]$.id,','), uniqueN)
+all_CDR3[[m]] <- all_CDR3[[m]] %>% mutate(MAF_Clonal_. = strsplit(as.character(MAF_Clonal_.), ","), .id = strsplit(as.character(.id), ",")) %>% unnest(MAF_Clonal_., .id)
+all_CDR3[[m]]$MAF_Clonal_. <- as.numeric(all_CDR3[[m]]$MAF_Clonal_.)
+all_CDR3[[m]]$.id <- factor(all_CDR3[[m]]$.id, levels=c(paste0(Mice[m],"-aLN-L"), paste0(Mice[m],"-iLN-L"), paste0(Mice[m],"-iLN-R"),paste0(Mice[m],"-aLN-R"), paste0(Mice[m],"-spleen"), paste0(Mice[m],"-BM")))
+
+
+
+df_bind[[m]]$.id <- mgsub(c("D-", "E-", "F-"), x=df_bind[[m]]$.id, replacement= c("", "", ""))
+all_CDR3[[m]]$.id <- mgsub(c("D-", "E-", "F-"), x=all_CDR3[[m]]$.id, replacement= c("", "", ""))
+df_bind[[m]]$Organ <- factor(df_bind[[m]]$.id, levels=c("aLN-L", "iLN-L", "aLN-R", "iLN-R","spleen","BM"))
+
+#filter out rows with MAF_Clonal_. = 0 for BM:
+df_bind_no0[[m]] <- df_bind[[m]][!df_bind[[m]]$MAF_Clonal_. == 0,]
+all_CDR3_no0[[m]] <- all_CDR3[[m]][!all_CDR3[[m]]$MAF_Clonal_. == 0,]
+
+#generate plots:
+
+ggplot(df_bind_no0[[m]], aes(x = Count, y = MAF_Clonal_.)) +
+  geom_point(all_CDR3_no0[[m]], mapping = aes(x = Count, y = MAF_Clonal_.), color="grey", alpha = 0.5, position = "jitter") +
+  geom_boxplot(width = 0.9) +
+  stat_summary(all_CDR3_no0[[m]], mapping = aes(x = Count, y = MAF_Clonal_.),fun.y = median, fun.ymin = median, fun.ymax = median, geom = "crossbar", color = '#737373', size = 0.4) +
+  geom_point(aes(color = Organ)) +
+  scale_color_manual(values = col_organs) +
+  scale_y_continuous(trans='log10', limits = c(0.0005, 20), labels = function(x) format(x, scientific = F, drop0trailing = TRUE)) +
+  ylab("Frequency in log10") +
+  scale_x_discrete(labels=c("1", "2", "3", "4", "5", "6"), position = "bottom") +
+  facet_wrap( ~ Count, ncol=6, scales = "free_x") + theme_cowplot() + theme(axis.title.y = element_text(size = 16),  axis.ticks.x = element_blank(), axis.title = element_text(size = 16), axis.text = element_text(size = 16), strip.text = element_text(size=14), legend.title = element_text(size = 16, face = "bold"), legend.text = element_text(size = 16),  strip.background = element_blank(), strip.text.x = element_blank()) 
+ setwd(fpath)
+}
+
+
+```
+
+
+
+##############################################################################################################
+
+# FIGURE 5F
+
+##############################################################################################################
+
+
+```{r BINDING - ORGAN Ratio plots within organs including all non-binding CDR3s: include=F, echo=F, cache=T}
+
+#For all organs combined
+xx <- list() # binder data
+yy <- list() # all data
+r <- list() # ratio
+
+for (i in 1:length(Mice)){
+xx[[i]] <- aggregate(data=df_bind[[i]],cbind(.id,CDR3)~Count, function(X) paste(X, collapse=",")) 
+xx[[i]]$n <- sapply(strsplit(xx[[i]]$CDR3,','), length)
+
+yy[[i]] <- aggregate(data=all_CDR3[[i]],cbind(.id,CDR3)~Count, function(X) paste(X, collapse=",")) 
+yy[[i]]$n <- sapply(strsplit(yy[[i]]$CDR3,','), length)
+
+xx[[i]]
+yy[[i]]
+
+
+xx[[i]] <- merge(data.frame("Count"=paste0(Reduce(`:`, range(c(1:6), as.numeric(sub('\\D+', '', xx[[i]]$Count)))))), xx[[i]], all.x=TRUE) #to add missing rows 
+
+r[[i]] <- xx[[i]]$n/yy[[i]]$n*100
+names(r[[i]]) <- c("1","2","3","4","5","6" )
+names(r)[i] <- Mice[i]
+
+}
+
+ratio <-data.frame(D = r$D, E = r$E, F = r$F)
+ratio <- tibble::rownames_to_column(ratio, "ov")
+ratio <- pivot_longer(ratio, D:F)
+ratio$name <- mgsub(c("D", "E", "F"), x=ratio$name, replacement= c("3x-D", "3x-E", "3x-F"))
+
+col_mouse <- c('#bdc9e1','#74a9cf','#0570b0', '#b2e2e2','#66c2a4','#238b45')
+
+ggplot(ratio, aes(x = ov, y = value, fill = name)) +
+  geom_col(position = "dodge2", color = "black") +
+  scale_fill_manual(values = col_mouse[4:6]) +
+  theme_cowplot() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ylab("Ratio binding clones to all clones [%] \n (organs combined)") +
+  xlab("") +
+  scale_colour_discrete("Mouse") +
+  facet_wrap( ~ ov, ncol=6, scales = "free_x") + theme_cowplot() + theme(axis.title.y = element_text(size = 16),  axis.ticks.x = element_blank(), axis.title = element_text(size = 16), axis.text = element_text(size = 16), strip.text = element_text(size=16), legend.title = element_text(size = 16, face = "bold"), legend.text = element_text(size = 16),  strip.background = element_blank(), strip.text.x = element_blank())  + labs(fill = "Mouse")
+
+  
+```
+
+
+##############################################################################################################
+
+# FIGURE 5D
+
+##############################################################################################################
+
+
+```{r clone and clonotype tracking plots for overlapping clones/clonoytpes in all 6 organs, include=F, echo=F, cache=T}
+
+
+Mice <- c("D", "E", "F")   
+pat <- c("D-", "E-", "F-") 
+
+data_clono2 <- data_clono[!names(data_clono) %like% "mouse"]
+
+
+#only keep binding clones:
+
+bind <- list()
+bind$D_yeast <- data.frame(CDR3= unique(yeast$yeast_D$CDR3[yeast$yeast_D$CDR3 %in% data_clono$D_mouse$CDR3]))
+bind$E_yeast <- data.frame(CDR3= unique(yeast$yeast_E$CDR3[yeast$yeast_E$CDR3 %in% data_clono$E_mouse$CDR3]))
+bind$F_yeast <- data.frame(CDR3= unique(yeast$yeast_F$CDR3[yeast$yeast_F$CDR3 %in% data_clono$F_mouse$CDR3]))
+
+input <- list()
+bind_CDR3 <- list()
+final_clono <- list()
+tab <-  list()
+ov <-  list()
+ov_df <-  list()
+targets <- list()
+
+
+#for overlapping CDR3s:
+for (m in 1:length(Mice)){
+input[[m]] <- ldply(data_clono2[grep(Mice[m], names(data_clono2))]) #per mouse
+bind_CDR3[[m]] <-  unique(bind[[m]]$CDR3) #all unique binding clones
+final_clono[[m]] <- input[[m]][get_field_sort(input[[m]], 'CDR3')%in%bind_CDR3[[m]],] 
+tab[[m]] <- table(final_clono[[m]]$CDR3)
+ov[[m]] <- names(tab[[m]][tab[[m]] > 5])
+targets[[m]] <- unique(input[[m]][input[[m]]$CDR3 %in% ov[[m]],]$CDR3)
+ov_df[[m]] <- input[[m]][get_field_sort(input[[m]], 'CDR3')%in%ov[[m]],] #keep binding clones that are present in all organs
+}
+
+names(ov_df) <- Mice
+names(ov) <- Mice
+names(targets) <- Mice
+
+#rename and reformat df:
+
+data_tc <- data_clono2
+for (i in 1:length(data_tc)){
+data_tc[[i]]$CDR3.aa <- data_tc[[i]]$CDR3
+data_tc[[i]]$Clones <- data_tc[[i]]$MAF_Clonal_.
+data_tc[[i]] <- data_tc[[i]][c("CDR3.aa", "Clones", "CDR3")]
+}
+
+
+annotationtblD <- ov_df$D[c("CDR3", "clonotype_large_90")][!duplicated(ov_df$D[c("CDR3",  "clonotype_large_90")]),]
+
+#MOUSE D: split dataframes for each mouse:
+
+cdr3_col_D_v2 <- c('#deebf7','#c6dbef','#fcbba1','#fc9272','#9ecae1','#6baed6', "grey",  "#cd3341", '#4292c6','#fb6a4a','#2171b5','#08519c','#08306b')
+
+
+tcD = trackClonotypes(data_tc[names(data_tc) %like% "D"], targets$D, .col = "aa")
+tcD[,2:7] <- tcD[,2:7]*100
+tcD$CDR3 <- tcD$CDR3.aa
+tcD <- merge(tcD,annotationtblD, by  = "CDR3") 
+tcD$CDR3 <- paste(tcD$CDR3.aa, tcD$clonotype_large_90)
+tcD <- tcD[order(tcD$`D-BM`)]
+tcD$CDR3.aa <- paste0(letters[1:length(tcD$CDR3.aa)], "_", tcD$CDR3.aa)
+
+vis(tcD[,2:8], .plot = "smooth") + scale_fill_manual(labels = as.character(tcD$CDR3), values = cdr3_col_D_v2) + xlab('')+ ylab("Frequency [%]\n") + labs(fill = "Binding clones") + ggtitle("") + scale_x_discrete(labels= c("aLN-L","iLN-L", "aLN-R", "iLN-R", "spleen", "BM")) + theme(axis.text.x = element_text(angle = 0, hjust = 0.5), axis.ticks.x = element_blank(), axis.title = element_text(size = 16), axis.text = element_text(size = 16), legend.title = element_text(size = 16, face = "bold"), legend.text = element_text(size = 12)) + ylim(c(0, 40))
+
+
+#MOUSE E: split dataframes for each mouse:
+
+cdr3_col_E_v2 <- c("#855F4C", "white","#5c1a33", '#a50f15', "#465952",  "#4DA896",  "#f3c483","#372421", "darkblue", "#B7A79B", "#f7dc6a",  "#cd3341","#50506D", "#E07882")
+
+annotationtblE <- ov_df$E[c("CDR3", "clonotype_large_90")][!duplicated(ov_df$E[c("CDR3",  "clonotype_large_90")]),]
+
+tcE = trackClonotypes(data_tc[names(data_tc) %like% "E"], targets$E, .col = "aa")
+tcE[,2:7] <- tcE[,2:7]*100
+tcE$CDR3 <- tcE$CDR3.aa
+tcE <- merge(tcE,annotationtblE, by  = "CDR3") 
+tcE$CDR3 <- paste(tcE$CDR3.aa, tcE$clonotype_large_90)
+tcE <- tcE[order(tcE$`E-BM`)]
+tcE$CDR3.aa <- paste0(letters[1:length(tcE$CDR3.aa)], "_", tcE$CDR3.aa)
+
+vis(tcE[,2:8], .plot = "smooth") + scale_fill_manual(labels = as.character(tcE$CDR3), values = cdr3_col_E_v2) + xlab('')+ ylab("Frequency [%]\n") + labs(fill = "Binding clones") + ggtitle("") + scale_x_discrete(labels= c("aLN-L","iLN-L", "aLN-R", "iLN-R", "spleen", "BM")) + theme(axis.text.x = element_text(angle = 0, hjust = 0.5), axis.ticks.x = element_blank(), axis.title = element_text(size = 16), axis.text = element_text(size = 16), legend.title = element_text(size = 16, face = "bold"), legend.text = element_text(size = 12)) + ylim(c(0, 40))
+
+
+#MOUSE F: split dataframes for each mouse:
+
+target = ov$F
+
+
+cdr3_col_F_v2 <- c("#cf4e7d", "#508578", "#89C5DA", "#ce1256",  "#5E738F","#fd8d3c", "#D7C1B1", "#673770", "#41b6c4")
+
+annotationtblF <- ov_df$F[c("CDR3", "clonotype_large_90")][!duplicated(ov_df$F[c("CDR3", "clonotype_large_90")]),]
+
+tcF = trackClonotypes(data_tc[names(data_tc) %like% "F"], targets$F, .col = "aa")
+tcF[,2:7] <- tcF[,2:7]*100
+tcF$CDR3 <- tcF$CDR3.aa
+tcF <- merge(tcF,annotationtblF, by  = "CDR3") 
+tcF <- tcF[!duplicated(tcF[,'CDR3']),] 
+tcF$CDR3 <- paste(tcF$CDR3.aa, tcF$clonotype_large_90)
+tcF <- tcF[order(tcF$`F-BM`)]
+tcF$CDR3.aa <- paste0(letters[1:length(tcF$CDR3.aa)], "_", tcF$CDR3.aa)
+
+vis(tcF[,2:8], .plot = "smooth") + scale_fill_manual(labels = as.character(tcF$CDR3), values = cdr3_col_F_v2) + xlab('')+ ylab("Frequency [%]\n") + labs(fill = "Binding clones") + ggtitle("") + scale_x_discrete(labels= c("aLN-L","iLN-L", "aLN-R", "iLN-R", "spleen", "BM")) + theme(axis.text.x = element_text(angle = 0, hjust = 0.5), axis.ticks.x = element_blank(), axis.title = element_text(size = 16), axis.text = element_text(size = 16), legend.title = element_text(size = 16, face = "bold"), legend.text = element_text(size = 12))  + ylim(c(0, 40))
+
+```
+
+
+
