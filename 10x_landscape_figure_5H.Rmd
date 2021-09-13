@@ -1,0 +1,149 @@
+---
+title: "10x_landscape_Figure_5H"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r helper functions , include=FALSE}
+
+rm(list=ls())
+
+
+# Helper function to extract the field of valid CDR3s from mixcr sort.csv files
+get_field_sort <- function(dataset, field){
+  
+  idx <- which(names(dataset) == field)
+  clmns <- dataset[, idx]
+  
+  return(clmns)
+}
+
+col_organs <- c("#fb8072","#ccebc5","#80b1d3","#fdb462")
+```
+
+
+```{r functions, include=FALSE, cache=TRUE}
+
+# Helper function to load packages. If package is not found, R tries to install it.
+
+load_pkg <- function(pkg){
+  if(!require(pkg, character.only = T)) {
+    install.packages(pkg)
+    library(pkg, character.only = T)
+  }
+}
+
+# Helper function to extract the field of valid CDR3s from MAF .csv files
+
+get_field <- function(dataset, field){
+  
+  idx <- which(names(dataset) == field)
+  clmns <- dataset[which(dataset$MAF_Clonal_. != 0), idx]
+  
+  return(clmns)
+}
+
+```
+
+
+```{r libraries, include=FALSE, cache=TRUE}
+
+library(plyr)
+load_pkg('gplots') 
+load_pkg('dplyr')
+load_pkg('venn')
+
+```
+
+# load 10x filtered contig analysis files for all organs:
+
+```{r datasets, include=FALSE, cache=TRUE}
+
+path <- '/data/10x/filtered_contig' #for .csv files
+
+files <- grep('.csv', list.files(path, full.names = TRUE), value = TRUE)
+data <- list()
+for(i in 1:length(files)){
+data[[i]] <- read.csv(files[[i]], header = TRUE, sep = ",", quote = "\"",
+         dec = ".", fill = TRUE, comment.char = "")
+}
+names(data)  <- sapply(strsplit(files, split = '[_/.]'), function(x) x[8])
+
+
+fpath <- '/data/10x/Figures/' 
+
+
+
+```
+
+
+```{r datasets cleaning and arrange, include=FALSE, cache=TRUE}
+
+
+data_clean <- data 
+for (i in 1:length(data_clean)){
+data_clean[[i]] <- data_clean[[i]][data_clean[[i]]$productive != 'False',]
+data_clean[[i]] <- data_clean[[i]][data_clean[[i]]$cdr3 != 'None',]
+data_clean[[i]] <- data_clean[[i]][data_clean[[i]]$chain != 'None',]
+}
+
+
+##################### OTHER OPTION:##################### ##################### ##################### ##################### ##################### 
+
+# use most abundant (reads) HC and LC if more than 1 are present:
+
+data_clean2 <- lapply(data_clean, function(x) x %>%  dplyr::group_by(barcode, chain) %>% top_n(1, reads))
+
+lapply(data_clean2, function(x) x %>% dplyr::count(barcode))
+
+##################### ##################### ##################### ##################### ##################### ##################### ##################### 
+
+data_clean_HC <- lapply(data_clean2, function(x) x %>% dplyr::filter(chain == 'IGH'))
+sapply(data_clean_HC, function(x) n_distinct(x$barcode))
+sapply(data_clean_HC, function(x) nrow(x))
+
+data_clean_LC <- lapply(data_clean2, function(x) x %>% dplyr::filter(chain != 'IGH') %>%  dplyr::group_by(barcode) %>% top_n(1, reads) %>%  dplyr::group_by(barcode) %>% top_n(1, umis))
+sapply(data_clean_LC, function(x) n_distinct(x$barcode))
+sapply(data_clean_LC, function(x) nrow(x))
+
+#merge data:
+
+data_clean3 <- lapply(c(1:4), function(x) dplyr::bind_rows(data_clean_HC[[x]], data_clean_LC[[x]]))
+
+#data with HC-LC merged:
+
+data_cdr_concat_V_J <- lapply(data_clean3, function(x) x %>% dplyr::group_by(barcode) %>% dplyr::arrange(chain) %>% dplyr::mutate(cdr3_LC_HC = paste0(cdr3,v_gene, j_gene, collapse = ""), HC_LC_contig = paste0(contig_id, collapse = "_")))
+
+data_cdr_concat_paired_V_J <- lapply(data_cdr_concat_V_J, function(x) x %>% 
+  dplyr::group_by(barcode) %>% 
+  dplyr::mutate(dupe = n()==1) %>% 
+  dplyr::filter(dupe == F) %>% dplyr::ungroup() %>% as.data.frame(.))
+
+# filter for IgG and extract CDR3s:
+
+
+  igg_list <- lapply(data_cdr_concat_paired_V_J, function(x) x %>% dplyr::filter(c_gene %like% 'IGHG')) 
+  igg_list <- lapply(igg_list, function(x) x %>% group_by(cdr3_LC_HC) %>% dplyr::mutate(id = dplyr::cur_group_id()) %>% as.data.frame(.))
+  names(igg_list) <- names(data_clean)
+  
+  cdr3list <- lapply(igg_list , function(x) unique(get_field_sort(x, 'cdr3_LC_HC')))
+  names(cdr3list) <- names(data_clean)
+
+  names(cdr3list) <- mgsub(c("LN1", "LN2", "SP"), x = names(cdr3list), replacement = c("aLN-L", "iLN-L", "spleen"))
+  
+   # Generate Venn diagram
+
+    pdf(paste(fpath,'10x_venn.pdf', sep = '')) 
+  venn(cdr3list, ellipse = T, zcolor = col_organs[c(1, 5, 4, 6)], 
+    lty =   c(1, 1, 1), col = "lightgrey", sncs = 2, ilcs = 2, ilabels = TRUE, box = F)
+ dev.off()
+
+
+```
+ 
+ 
