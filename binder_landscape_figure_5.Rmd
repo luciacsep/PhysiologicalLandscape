@@ -27,18 +27,18 @@ load_pkg <- function(pkg){
 
 ```{r libraries/packages, include=FALSE, cache=TRUE}
 
-library(plyr)
+load_pkg('plyr')
 load_pkg('gplots') # Load gplots before venn -> overrides venn function
 load_pkg('dplyr')
 load_pkg('venn')
 load_pkg('ggplot2')
 load_pkg('cowplot')
 load_pkg('pheatmap')
-library(RColorBrewer)
+load_pkg('RColorBrewer')
 load_pkg('plotrix')
-library(tidyr)
-library(immunarch)
-library(textclean)
+load_pkg('tidyr')
+load_pkg('immunarch')
+load_pkg('textclean')
 load_pkg('stringr')
 load_pkg('stringdist')
 
@@ -96,10 +96,12 @@ col_25 <- c("#89C5DA", "#D3D93E", "#006d2c", "#C84248", "#253494", "#C0717C", "g
 
 ```{r import and pre-process data, include=FALSE, cache=TRUE}
 
-ypath <- '/data/yeast/'
-mpath <- '/data/mice/'
-fpath <- '/data/figures/'
-opath <- '/data/output/'
+dir.create('output')
+
+ypath <- 'yeast'
+mpath <- 'data'
+fpath <- 'output/'
+opath <- 'output/'
 
 # Import yeast data:
 
@@ -112,7 +114,7 @@ yeast[[i]] <- yeast[[i]][!yeast[[i]]$cloneCount < 2, ]
 yeast[[i]] <- dplyr::rename(yeast[[i]], CDR3 = aaSeqImputedCDR3) #rename column to 'CDR3'
 yeast[[i]] <- yeast[[i]][yeast[[i]]$CDR3 != 0,]#remove rows with no CDR3
 }
-names(yeast) <- sapply(strsplit(files, split = '[/_.]'), function(x) x[8])
+names(yeast) <- sapply(strsplit(files, split = '[/_.]'), function(x) x[2])
 
 
 # merge all files per mouse and keep only unique CDR3s::
@@ -134,7 +136,7 @@ files <- grep('.txt', list.files(mpath, full.names = TRUE), value = TRUE)
 
 data <- list()
 
-for(i in 1:length(files[1:18])){
+for(i in 1:length(files[19:36])){
   
   data[[i]] <- read.delim(files[i])
   data[[i]] <- data[[i]][data[[i]]$Majority_Isotype != 'Control',]
@@ -145,7 +147,7 @@ for(i in 1:length(files[1:18])){
   data[[i]] <- with(data[[i]], data[[i]][order(MAF_Clonal_., decreasing = T), ])
   data[[i]] <- droplevels(data[[i]]) #to remove filtered out rows to appear in subsequent analysis
 }
-names(data) <- sapply(strsplit(files[1:18], split = '[/_.]'), function(x) x[8])
+names(data) <- sapply(strsplit(files[19:36], split = '[/_.]'), function(x) x[2])
 names(data) <- mgsub(c("-1", "-2", "-3", "-4", "-5", "-6"),x=names(data),replacement= c("-aLN-L", "-iLN-L", "-iLN-R", "-aLN-R", "-spleen", "-BM"))
 names(data) <- mgsub(c("F6-", "H8-", "I9-"),x=names(data),replacement= c("D-", "E-", "F-"))
 data <- data[c("D-aLN-L", "D-iLN-L", "D-aLN-R", "D-iLN-R", "D-spleen", "D-BM", "E-aLN-L", "E-iLN-L", "E-aLN-R", "E-iLN-R", "E-spleen", "E-BM", "F-aLN-L", "F-iLN-L", "F-aLN-R", "F-iLN-R", "F-spleen", "F-BM")]

@@ -25,9 +25,11 @@ rm(list=ls())
 
 ```{r paths}
 
-path <- '/data/mice'
-fpath <- '/data/figures/'
-opath <- '/data/output/'
+dir.create('output')
+
+path <- 'data'
+fpath <- 'output/'
+opath <- 'output/'
 
 ```
 
@@ -321,9 +323,9 @@ SHOW ONLY FIVE CLONOTYPES PER ORGAN:
 ```{r CLONO FOR EACH MOUSE SEPARATELY; SHOW ONLY FIVE CLONOTYPES PER ORGAN: network formation DEPENDING ON CL_SIZE, echo=FALSE, cache=TRUE}
 
 
-library(cellranger)
-library(scales)
-library(igraph)
+load_pkg('cellranger')
+load_pkg('scales')
+load_pkg('igraph')
 
 graph_similarity_list<-list()
 top_clonotypes_list<-list()

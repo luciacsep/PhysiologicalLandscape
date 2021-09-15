@@ -17,9 +17,11 @@ rm(list=ls())
 
 ```{r paths}
 
-path <- '/data/mice'
-fpath <- '/data/mice/figures/'
-opath <- '/data/mice/output/'
+dir.create('output')
+
+path <- 'data'
+fpath <- 'output/'
+opath <- 'output/'
 
 ```
 
@@ -51,7 +53,7 @@ get_field <- function(dataset, field){
 
 ```{r libraries/packages, include=FALSE, cache=TRUE}
 
-library(plyr)
+load_pkg('plyr')
 load_pkg('gplots') 
 load_pkg('dplyr')
 load_pkg('venn')
@@ -60,27 +62,30 @@ load_pkg('cowplot')
 load_pkg('stringdist')
 load_pkg('seqinr')
 load_pkg('devtools')
-library(robCompositions)
-library(VennDiagram)
-library(circlize)
-library(RColorBrewer)
+#aload_pkg('robCompositions')
+load_pkg('VennDiagram')
+load_pkg('circlize')
+load_pkg('RColorBrewer')
 load_pkg('plotrix')
-library('vegan')
-library(plotly)
+load_pkg('vegan')
+load_pkg('plotly')
 load_pkg('kmer')
-library(RColorBrewer)
-library(purrr)
-library(ape)
-library(ggplot2)
-library(igraph)
-library(limma)
-library(pheatmap)
-library(viridis)
-load_pkg('edgeR')
+load_pkg('RColorBrewer')
+load_pkg('purrr')
+load_pkg('ape')
+load_pkg('ggplot2')
+load_pkg('igraph')
+load_pkg('BiocManager')
+BiocManager::install('limma')
+#load_pkg('limma')
+load_pkg('pheatmap')
+load_pkg('viridis')
+#load_pkg('edgeR')
 load_pkg('stringr')
-library(tidyr)
-library(textclean)
-library(gridExtra)
+load_pkg('tidyr')
+load_pkg('textclean')
+load_pkg('gridExtra')
+ load_pkg('data.table')
 
 
 ```
@@ -124,7 +129,7 @@ for(i in 1:length(files)){
   data[[i]] <- data[[i]][c("CDR3","MAF_Clonal_.", "Majority_V_Gene", "Majority_J_Gene", "Majority_Isotype", "SHM.ns._CB")]
   data[[i]] <- droplevels(data[[i]]) #to remove filtered out rows to appear in subsequent analysis
 }
-names(data) <- sapply(strsplit(files, split = '[/_.]'), function(x) x[8])
+names(data) <- sapply(strsplit(files, split = '[/_.]'), function(x) x[2])
 
 names(data) <- mgsub(c("-1", "-2", "-3", "-4", "-5", "-6"),x=names(data),replacement= c("-aLN-L", "-iLN-L", "-iLN-R", "-aLN-R", "-spleen", "-BM"))
 names(data) <- mgsub(c("A1-", "D4-", "E5-", "F6-", "H8-", "I9-"),x=names(data),replacement= c("A-", "B-", "C-", "D-", "E-", "F-"))
@@ -624,7 +629,7 @@ load_pkg("ggpubr")
 
 
 #statistical testing:
-solo_df$cohort <- strsplit2(solo_df$id, split = "-")[,1]
+solo_df$cohort <- limma::strsplit2(solo_df$id, split = "-")[,1]
 bar <- ggplot(solo_df, aes(x=cohort, y=clone_90)) +
   stat_summary(fun.y = mean, geom = "bar", colour="black") + 
   stat_summary(geom = "errorbar", fun.data = mean_se, width=0.2, colour="black", alpha = 0.9, size=0.5) 
@@ -777,7 +782,7 @@ breaksList = seq(0.1, 1, by = 0.01) # for same color range across plots
 
 
 #create annotaion for legend lables and colors:
-annotation <- data.frame(strsplit2(colnames(Vgene_mat_counts), split = "_"), row.names = colnames(Vgene_mat_counts), stringsAsFactors = T)
+annotation <- data.frame(limma::strsplit2(colnames(Vgene_mat_counts), split = "_"), row.names = colnames(Vgene_mat_counts), stringsAsFactors = T)
 colnames(annotation) <- c("Mouse", "Organ", "Cohort")
 annotation$Cohort <- factor(annotation$Cohort, levels = c("1x", "3x"))
 annotation$Organ <- factor(annotation$Organ, levels = c("aLN-L", "iLN-L", "aLN-R", "iLN-R", "spleen", "BM"))
@@ -905,7 +910,7 @@ FIGURE 3 C
 
 ```{r CDR3 FOR ALL MICE COMBINED: Make CDR3 heatmap on all mice together , include=FALSE, cache=TRUE}
 
-library(immunarch)
+load_pkg('immunarch')
 
 # create clonal overlap matrices via immunarch:
 # rename CDR3 column and name dataframes for immunarch functions --> data_immunarch:
@@ -930,7 +935,7 @@ cosine_all <- repOverlap(data_clone_immunarch, .method = "cosine", .verbose = T)
 
 # generate annotation table:
 
-annotation <- data.frame(strsplit2(colnames(cosine_all), split = "_"), row.names = colnames(cosine_all), stringsAsFactors = T)
+annotation <- data.frame(limma::strsplit2(colnames(cosine_all), split = "_"), row.names = colnames(cosine_all), stringsAsFactors = T)
 colnames(annotation) <- c("Mouse", "Organ", "Cohort")
 annotation$Mouse <- mgsub(c("A", "B", "C", "D", "E", "F"), x=annotation$Mouse,replacement= c("A-1x", "B-1x", "C-1x", "D-3x", "E-3x", "F-3x"))
 annotation$Mouse <- factor(annotation$Mouse, levels =  c("A-1x", "B-1x", "C-1x", "D-3x", "E-3x", "F-3x"))
@@ -1003,15 +1008,14 @@ FIGURE 3 A
 
 #https://stackoverflow.com/questions/5665599/range-standardization-0-to-1-in-r
 
-library(tidygraph)
-library(tidyverse)
-library(igraph)
-library(ggraph)
-library(graphlayouts)
-library(ggforce)
-library(scatterpie)
-library(scatterpie)
-library(oaqc)
+load_pkg('tidygraph')
+load_pkg('tidyverse')
+load_pkg('igraph')
+load_pkg('ggraph')
+load_pkg('graphlayouts')
+load_pkg('ggforce')
+load_pkg('scatterpie')
+load_pkg('oaqc')
 
 #Preparing data:
 names(data_clone) <- mgsub(c("-aLN-L", "-iLN-L", "-aLN-R", "-iLN-R", "-spleen", "-BM"),x= names(data_clone),replacement= c("_aLN-L", "_iLN-L", "_aLN-R", "_iLN-R", "_spleen", "_BM"))
@@ -1124,7 +1128,7 @@ q <- ggraph(net.tidy3, "manual", x =x, y = y) +
   theme(strip.text.x = element_text(size = 10))
 q
 
-setwd(fpath)
+#setwd(fpath)
 
 ```
 

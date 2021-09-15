@@ -64,7 +64,9 @@ load_pkg('venn')
 
 ```{r datasets, include=FALSE, cache=TRUE}
 
-path <- '/data/10x/filtered_contig' #for .csv files
+dir.create('output')
+
+path <- '10x_filtered_contig' #for .csv files
 
 files <- grep('.csv', list.files(path, full.names = TRUE), value = TRUE)
 data <- list()
@@ -75,7 +77,7 @@ data[[i]] <- read.csv(files[[i]], header = TRUE, sep = ",", quote = "\"",
 names(data)  <- sapply(strsplit(files, split = '[_/.]'), function(x) x[8])
 
 
-fpath <- '/data/10x/Figures/' 
+fpath <- 'output/' 
 
 
 
