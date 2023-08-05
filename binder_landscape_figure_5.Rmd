@@ -596,6 +596,8 @@ plot(gt)
 
 ```{r FREQUENCY - ORGAN Ratio plots within organs including all non-binding CDR3s: include=T, echo=F, cache=T}
 
+load_pkg("ggpubr")
+
 #add all CDR3s (non-binding) in grey: 
 
 #Extract all CDR3s from organ that match binders:
@@ -711,16 +713,19 @@ ratio$name <- mgsub(c("D", "E", "F"), x=ratio$name, replacement= c("3x-D", "3x-E
 
 col_mouse <- c('#bdc9e1','#74a9cf','#0570b0', '#b2e2e2','#66c2a4','#238b45')
 
-ggplot(ratio, aes(x = ov, y = value, fill = name)) +
+  ggplot(ratio, aes(x = ov, y = value, fill = name)) +
   geom_col(position = "dodge2", color = "black") +
   scale_fill_manual(values = col_mouse[4:6]) +
+  stat_cor(aes(color = name),color =  col_mouse[4:6], size = 6, method="spearman", output.type = "text", label.x.npc = "left") + #cor.coef.name = c("R")
   theme_cowplot() +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-  ylab("Ratio binding clones to all clones [%] \n (organs combined)") +
-  xlab("") +
+  ylab("Percent binding clones \n") +
+  xlab("Overlap N organs") +
   scale_colour_discrete("Mouse") +
-  facet_wrap( ~ ov, ncol=6, scales = "free_x") + theme_cowplot() + theme(axis.title.y = element_text(size = 16),  axis.ticks.x = element_blank(), axis.title = element_text(size = 16), axis.text = element_text(size = 16), strip.text = element_text(size=16), legend.title = element_text(size = 16, face = "bold"), legend.text = element_text(size = 16),  strip.background = element_blank(), strip.text.x = element_blank())  + labs(fill = "Mouse")
-
+   scale_x_continuous(breaks =c(1,2,3,4,5,6)) +
+   scale_y_continuous(expand = c(0, 0), limits = c(0, NA))+
+  theme_cowplot() + theme(axis.title.y = element_text(size = 20),  axis.ticks.x = element_blank(), axis.title = element_text(size = 20), axis.text =     element_text(size = 20), legend.title = element_text(size = 20, face = "bold"), legend.text = element_text(size = 20),  strip.background = element_blank(), strip.text.x = element_blank())  + labs(fill = "Mouse")
+  setwd(fpath)
   
 ```
 
